@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC Infinite Drop</title>
+    <script src="https://cdn.jsdelivr.net/npm/qrious@4.0.2/dist/qrious.min.js"></script>
+    <style>
+        :root {
+            --primary: #007aff;
+            --primary-hover: #005bb5;
+            --bg: #ffffff;
+            --text: #1d1d1f;
+            --gray: #f5f5f7;
+            --border: #d2d2d7;
+            --success: #34c759;
+            --danger: #ff3b30;
+            --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: var(--font);
+            background-color: var(--bg);
+            color: var(--text);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        /* --- UI Components --- */
+        .hidden { display: none !important; }
+        
+        .banner { width: 100%; padding: 1rem; text-align: center; font-size: 0.95rem; }
+        .banner.warning { background: #fff3cd; color: #856404; border-bottom: 1px solid #ffeeba; }
+        .banner a { color: inherit; font-weight: 600; }
+
+        #toast {
+            position: fixed; bottom: 40px; background: rgba(0, 0, 0, 0.85); color: white;
+            padding: 12px 24px; border-radius: 8px; font-weight: bold; opacity: 0;
+            transform: translateY(20px); transition: all 0.3s ease; pointer-events: none; z-index: 9999;
+        }
+        #toast.show { opacity: 1; transform: translateY(0); }
+
+        /* --- Views --- */
+        .view {
+            width: 100%; max-width: 800px; padding: 2rem; display: none;
+            flex-direction: column; align-items: center; text-align: center;
+            animation: fadeIn 0.4s ease-out;
+        }
+        .view.active { display: flex; }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        h1 { font-size: 2rem; margin-bottom: 0.5rem; }
+        p.subtitle { color: #86868b; margin-bottom: 2rem; }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 1rem;
+            border: 2px solid var(--border);
+            border-radius: 12px;
+            font-family: monospace;
+            font-size: 0.9rem;
+            background: var(--gray);
+            margin-bottom: 1rem;
+            transition: border-color 0.2s;
+            text-align: center;
+            font-weight: bold;
+            color: var(--primary);
+            height: 60px; /* Forces identical height for all textfields */
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        input[type="text"]:focus {
+            outline: none; border-color: var(--primary); background: #fff;
+        }
+        input[type="text"]:not([readonly]) {
+            color: var(--text); font-weight: normal; cursor: text; text-align: left;
+        }
+        input[type="text"][readonly] { cursor: pointer; }
+
+        .spinner {
+            width: 32px; height: 32px; border: 3px solid rgba(0, 122, 255, 0.3);
+            border-top-color: var(--primary); border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* --- Transfer Area --- */
+        .drop-zone {
+            width: 100%; padding: 3rem; border: 3px dashed var(--border);
+            border-radius: 24px; background: var(--gray); color: #86868b;
+            font-size: 1.2rem; cursor: pointer; transition: all 0.2s; position: relative;
+        }
+        .drop-zone.dragover { background: #e8f0fe; border-color: var(--primary); color: var(--primary); }
+        .drop-zone input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+
+        .transfer-list {
+            width: 100%; margin-top: 2rem; display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 1rem;
+        }
+
+        .transfer-item {
+            background: white; border: 1px solid var(--border); padding: 1.5rem;
+            border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            display: flex; flex-direction: column; gap: 0.75rem; position: relative;
+            overflow: hidden;
+        }
+        
+        /* Done state overlay & icons */
+        .transfer-item::after {
+            content: ''; position: absolute; inset: 0; background: rgba(255, 255, 255, 0.75);
+            border-radius: 12px; opacity: 0; pointer-events: none; transition: opacity 0.4s ease; z-index: 1;
+        }
+        .transfer-item.done::after { opacity: 1; }
+        .status-icon {
+            display: none; align-items: center; justify-content: center; position: absolute;
+            top: 50%; left: 50%; transform: translate(-50%, -50%); width: 80px; height: 80px; z-index: 2;
+        }
+        .status-icon svg { width: 100%; height: 100%; stroke-width: 3; }
+        .transfer-item.done .status-icon { display: flex; }
+        .icon-success { color: var(--success); }
+        .icon-danger { color: var(--danger); }
+
+        .transfer-header { display: flex; justify-content: space-between; font-weight: 500; }
+        .transfer-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%; }
+        .badge { font-size: 0.8rem; padding: 2px 8px; border-radius: 12px; font-weight: bold; }
+        .badge.out { background: #e8f0fe; color: var(--primary); }
+        .badge.in { background: #e6f4ea; color: var(--success); }
+
+        .progress-track { width: 100%; height: 8px; background: var(--gray); border-radius: 4px; overflow: hidden; }
+        .progress-bar { height: 100%; background: var(--primary); width: 0; transition: width 0.1s linear; }
+        .progress-bar.success { background: var(--success); }
+        .progress-bar.failed { background: var(--danger); width: 100%; }
+
+        .transfer-stats { font-size: 0.85rem; color: #86868b; display: flex; justify-content: space-between; }
+        
+        /* --- Modal --- */
+        .overlay {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.85); backdrop-filter: blur(8px);
+            z-index: 1000; display: flex; justify-content: center; align-items: center;
+        }
+        .modal {
+            background: var(--bg); padding: 2rem; border-radius: 12px;
+            width: 90%; max-width: 400px; text-align: center;
+        }
+        .modal h2 { margin-bottom: 1rem; }
+        .modal .filename { font-size: 1.2rem; color: var(--primary); font-weight: bold; }
+        .modal-buttons { display: flex; gap: 1rem; margin-top: 2rem; }
+        .btn { flex: 1; padding: 10px; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; }
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-secondary { background: var(--gray); color: var(--text); }
+    </style>
+</head>
+<body>
+
+    <div id="api-warning" class="banner warning hidden">
+        <strong>Warning:</strong> Your browser lacks <a href="https://developer.mozilla.org/en-US/docs/Web/API/File_System_API" target="_blank">File System Access API</a> support. Receiving bigger files may fail. Enable it in browser's flags or in website settings.
+    </div>
+
+    <div id="toast">Message</div>
+
+    <!-- HOST VIEW -->
+    <div id="view-host" class="view">
+        <h1>Host a Connection</h1>
+        <p class="subtitle">Share this link with another pc:</p>
+        <input type="text" id="share-url" readonly placeholder="Generating link...">
+        <div id="qr-code-container" style="margin-top: 1.5rem; display: flex; justify-content: center;" class="hidden">
+            <canvas id="qr-code" style="width: 200px; height: 200px; border-radius: 20px;"></canvas>
+        </div>
+        <div id="manual-fallback" class="hidden" style="width: 100%;">
+            <p class="subtitle" style="margin: 1rem 0 0.5rem;">And paste client response code here:</p>
+            <input type="text" id="host-answer-input" placeholder="Paste response code here...">
+        </div>
+    </div>
+
+    <!-- CLIENT VIEW -->
+    <div id="view-client" class="view">
+        <h1>Joining...</h1>
+        <div id="client-loading" class="spinner"></div>
+        <div id="client-ready" class="hidden" style="width: 100%;">
+            <p class="subtitle" style="color: var(--success);">Success! Send this message back to the host:</p>
+            <input type="text" id="client-answer-output" readonly>
+            <p style="color: #86868b; font-size: 0.85rem; margin-top: 1rem;">Waiting for host to accept...</p>
+        </div>
+    </div>
+
+    <!-- TRANSFER VIEW -->
+    <div id="view-transfer" class="view" style="max-width: 1200px;">
+        <div id="drop-zone" class="drop-zone">
+            <div>
+                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom: 1rem;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+            </div>
+            <strong>Drag & Drop files or folders here</strong>
+            <p style="font-size: 0.9rem; margin-top: 0.5rem;">or click to browse</p>
+            <input type="file" id="file-input" multiple>
+        </div>
+        <div class="transfer-list" id="transfer-list"></div>
+    </div>
+
+    <!-- INCOMING TRANSFER MODAL -->
+    <div id="accept-overlay" class="overlay hidden">
+        <div class="modal">
+            <h2>Incoming Transfer</h2>
+            <p class="filename" id="incoming-filename"></p>
+            <p id="incoming-filesize" style="color: var(--success); margin: 0.5rem 0 1rem;"></p>
+            <p id="incoming-prompt"></p>
+            <div class="modal-buttons">
+                <button class="btn btn-primary" id="btn-accept">Accept</button>
+                <button class="btn btn-secondary" id="btn-reject">Reject</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const CONFIG = {
+            API_URL: '',
+            CHUNK_SIZE: 64 * 1024,
+            BUFFER_THRESHOLD: 64 * 1024 * 16,
+            ICE_SERVERS: [
+                {
+                urls: [
+                    "stun:stun.l.google.com:19302",
+                    "stun:stun.l.google.com:5349",
+                    "stun:stun1.l.google.com:3478",
+                    "stun:stun1.l.google.com:5349",
+                    "stun:stun2.l.google.com:19302",
+                    "stun:stun2.l.google.com:5349",
+                    "stun:stun3.l.google.com:3478",
+                    "stun:stun3.l.google.com:5349",
+                    "stun:stun4.l.google.com:19302",
+                    "stun:stun4.l.google.com:5349"
+                ]
+                }
+            ]
+            };
+
+        const state = {
+            hasFSAPI: ('showDirectoryPicker' in window),
+            isHost: false,
+            pc: new RTCPeerConnection({ iceServers: CONFIG.ICE_SERVERS }),
+            dataChannel: null,
+            batchQueue: [], isSending: false, currentBatch: null, currentFile: null,
+            incomingBatch: null, incomingExpectedSize: 0, incomingReceivedSize: 0,
+            incomingFilePath: '', fallbackChunks: [], fileStream: null,
+            baseDirHandle: null, singleFileHandle: null,
+            messageQueue: [], isProcessingMessage: false
+        };
+
+        const sanitizeFilename = (name) => name.replace(/[\\/:*?"<>|]/g, '_');
+
+        const $ = id => document.getElementById(id);
+        const formatBytes = (bytes) => {
+            if (!+bytes) return '0 B';
+            const i = Math.floor(Math.log(bytes) / Math.log(1024));
+            return `${(bytes / Math.pow(1024, i)).toFixed(2)} ${['B', 'KB', 'MB', 'GB', 'TB'][i]}`;
+        };
+        
+        async function compress(str) {
+            const stream = new Blob([str]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+            const buffer = await new Response(stream).arrayBuffer();
+            return btoa(String.fromCharCode(...new Uint8Array(buffer)));
+        }
+        
+        async function decompress(b64) {
+            const binary = atob(b64.replace(/\s+/g, ''));
+            const bytes = new Uint8Array([...binary].map(c => c.charCodeAt(0)));
+            const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+            return await new Response(stream).text();
+        }
+
+        const gatherIce = (pc, timeout = 1500) => new Promise(resolve => {
+            if (pc.iceGatheringState === 'complete') return resolve();
+            const timer = setTimeout(resolve, timeout);
+            pc.onicecandidate = e => { if (!e.candidate) { clearTimeout(timer); resolve(); } };
+        });
+
+        const downloadBlob = (chunks, name) => {
+            const url = URL.createObjectURL(new Blob(chunks));
+            const a = Object.assign(document.createElement('a'), { href: url, download: name });
+            document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 10000);
+        };
+
+        const UI = {
+            showView(id) {
+                document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+                $(id).classList.add('active');
+            },
+            toast(msg) {
+                $('toast').innerText = msg;
+                $('toast').classList.add('show');
+                setTimeout(() => $('toast').classList.remove('show'), 2500);
+            },
+            createTransferItem(id, name, type, totalSize) {
+                const isOut = type === 'out';
+                const html = `
+                    <div class="transfer-item" id="item-${id}">
+                        <div id="icon-${id}" class="status-icon"></div>
+                        <div class="transfer-header">
+                            <span class="transfer-name" title="${name}">${name}</span>
+                            <span class="badge ${isOut ? 'out' : 'in'}">${isOut ? 'Sending' : 'Receiving'}</span>
+                        </div>
+                        <div class="progress-track"><div id="bar-${id}" class="progress-bar"></div></div>
+                        <div class="transfer-stats">
+                            <span id="status-${id}">Pending...</span>
+                            <span><span id="size-${id}">0 B</span> / ${formatBytes(totalSize)} (<span id="pct-${id}">0%</span>)</span>
+                        </div>
+                    </div>`;
+                $('transfer-list').insertAdjacentHTML('afterbegin', html);
+            },
+            updateProgress(id, current, total) {
+                if (!$(`pct-${id}`)) return;
+                const pct = total === 0 ? 100 : Math.min((current / total) * 100, 100);
+                $(`pct-${id}`).innerText = `${pct.toFixed(2)}%`;
+                $(`bar-${id}`).style.width = `${pct}%`;
+                $(`size-${id}`).innerText = formatBytes(current);
+            },
+            setTransferStatus(id, status, isError = false) {
+                if (!$(`status-${id}`)) return;
+                $(`status-${id}`).innerText = status;
+                $(`status-${id}`).style.color = isError ? "var(--danger)" : "var(--text)";
+                
+                const itemEl = $(`item-${id}`);
+                const iconEl = $(`icon-${id}`);
+                const barEl = $(`bar-${id}`);
+
+                if (status === 'Done' || isError) {
+                    itemEl.classList.add('done');
+                    if (isError) {
+                        barEl.classList.add('failed');
+                        iconEl.classList.add('icon-danger');
+                        iconEl.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
+                    } else {
+                        barEl.classList.add('success');
+                        iconEl.classList.add('icon-success');
+                        iconEl.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+                    }
+                }
+            },
+            showIncomingModal(batch) {
+                $('incoming-filename').innerText = batch.name;
+                $('incoming-filesize').innerText = `${formatBytes(batch.totalSize)} ${batch.fileCount > 1 ? `(${batch.fileCount} items)` : ''}`;
+                $('incoming-prompt').innerHTML = state.hasFSAPI 
+                    ? `Select a <strong>${batch.isSingleFile ? 'save location' : 'save folder'}</strong>.` 
+                    : `<strong>Accept download</strong> (In-Memory mode)`;
+                $('accept-overlay').classList.remove('hidden');
+            }
+        };
+
+        const SignalingAPI = {
+            async postOffer() {
+                const res = await fetch(`${CONFIG.API_URL}/offer`, { method: 'POST', signal: AbortSignal.timeout(2000) });
+                return res.ok ? await res.json() : null;
+            },
+            async patchOffer(code, data) {
+                await fetch(`${CONFIG.API_URL}/offer/${code}`, {
+                    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
+                });
+            },
+            async getAnswer(code) {
+                const res = await fetch(`${CONFIG.API_URL}/offer/${code}`);
+                return await res.json();
+            }
+        };
+
+        async function initHost() {
+            state.dataChannel = state.pc.createDataChannel('fileStream', { ordered: true });
+            setupDataChannel();
+
+            try {
+                if (CONFIG.API_URL == '') throw new Error("API Offline");
+                const apiRes = await SignalingAPI.postOffer();
+                if (!apiRes) throw new Error("API Offline");
+
+                const shortLink = `${window.location.origin}${window.location.pathname}#${apiRes.code}`;
+                setupCopyInput('share-url', shortLink, "Host link copied!");
+
+                new QRious({
+                    element: document.getElementById('qr-code'),
+                    value: shortLink,
+                    size: 200,
+                    level: 'H'
+                });
+                document.getElementById('qr-code-container').classList.remove('hidden');
+
+                const offer = await state.pc.createOffer();
+                await state.pc.setLocalDescription(offer);
+                await gatherIce(state.pc, 2000);
+
+                await SignalingAPI.patchOffer(apiRes.code, { offer: await compress(JSON.stringify(state.pc.localDescription)) });
+
+                const poll = async () => {
+                    const { answer } = await SignalingAPI.getAnswer(apiRes.code);
+                    if (answer && state.pc.signalingState !== 'stable') {
+                        await state.pc.setRemoteDescription(JSON.parse(await decompress(answer)));
+                    } else if (!answer) {
+                        setTimeout(poll, 2000);
+                    }
+                };
+                poll();
+            } catch (err) {
+                $('manual-fallback').classList.remove('hidden');
+                const offer = await state.pc.createOffer();
+                await state.pc.setLocalDescription(offer);
+                await gatherIce(state.pc);
+                
+                const link = `${window.location.origin}${window.location.pathname}?offer=${encodeURIComponent(await compress(JSON.stringify(state.pc.localDescription)))}`;
+                setupCopyInput('share-url', link, "Link copied!");
+            }
+
+            $('host-answer-input').addEventListener('input', async (e) => {
+                try {
+                    if (e.target.value.trim() && state.pc.signalingState !== 'stable') {
+                        await state.pc.setRemoteDescription(JSON.parse(await decompress(e.target.value.trim())));
+                    }
+                } catch(e) {}
+            });
+        }
+
+        async function initClient(encodedOffer, apiCode = null) {
+            state.pc.ondatachannel = (e) => { state.dataChannel = e.channel; setupDataChannel(); };
+            
+            try {
+                const offerData = encodedOffer || (await SignalingAPI.getAnswer(apiCode)).offer;
+                if (!offerData) throw new Error("Invalid offer");
+
+                await state.pc.setRemoteDescription(JSON.parse(await decompress(offerData)));
+                await state.pc.setLocalDescription(await state.pc.createAnswer());
+                await gatherIce(state.pc);
+
+                const answerData = await compress(JSON.stringify(state.pc.localDescription));
+
+                if (apiCode) {
+                    await SignalingAPI.patchOffer(apiCode, { answer: answerData });
+                    $('client-loading').classList.remove('hidden');
+                    document.querySelector('#view-client p.subtitle').innerText = "Answer sent! Waiting for host...";
+                } else {
+                    $('client-loading').classList.add('hidden');
+                    $('client-ready').classList.remove('hidden');
+                    setupCopyInput('client-answer-output', answerData, "Response code copied!");
+                }
+            } catch (err) {
+                alert("Failed to connect. Link may be invalid.");
+                window.location.href = window.location.pathname;
+            }
+        }
+
+        function setupCopyInput(id, val, msg) {
+            const el = $(id);
+            el.value = val;
+            el.onclick = () => { el.select(); navigator.clipboard.writeText(val); UI.toast(msg); };
+        }
+
+        function setupDataChannel() {
+            state.dataChannel.binaryType = 'arraybuffer';
+            state.dataChannel.onopen = () => UI.showView('view-transfer');
+            state.dataChannel.onclose = () => { alert("Connection lost."); window.location.reload(); };
+            state.dataChannel.onmessage = (e) => {
+                state.messageQueue.push(e.data);
+                processMessageQueue();
+            };
+        }
+
+        async function processMessageQueue() {
+            if (state.isProcessingMessage || !state.messageQueue.length) return;
+            state.isProcessingMessage = true;
+            
+            while (state.messageQueue.length > 0) {
+                const data = state.messageQueue.shift();
+                typeof data === 'string' ? await handleSignal(JSON.parse(data)) : await handleChunk(data);
+            }
+            state.isProcessingMessage = false;
+        }
+
+        const sendJSON = (msg) => state.dataChannel.send(JSON.stringify(msg));
+
+        async function handleSignal(msg) {
+            const { type, id, name, totalSize, isSingleFile, fileCount, path, size, message } = msg;
+
+            switch (type) {
+                case 'batch-meta':
+                    state.incomingBatch = { ...msg, transferred: 0 };
+                    if (!state.hasFSAPI && !isSingleFile) {
+                        UI.createTransferItem(id, name, 'in', totalSize);
+                        UI.setTransferStatus(id, "Directories unsupported without API", true);
+                        sendJSON({ type: 'error', id, message: 'Directories require File System API' });
+                        return;
+                    }
+                    UI.showIncomingModal(state.incomingBatch);
+                    break;
+                case 'batch-accept': sendNextFile(); break;
+                case 'file-meta':
+                    state.incomingExpectedSize = size;
+                    state.incomingReceivedSize = 0;
+                    state.incomingFilePath = path;
+                    state.fallbackChunks = [];
+                    
+                    if (state.hasFSAPI) {
+                        try {
+                            let handle = isSingleFile ? state.singleFileHandle : state.baseDirHandle;
+                            if (!isSingleFile) {
+                                const parts = path.split('/');
+                                const filename = sanitizeFilename(parts.pop());
+                                for (const p of parts) if (p) handle = await handle.getDirectoryHandle(sanitizeFilename(p), { create: true });
+                                handle = await handle.getFileHandle(filename, { create: true });
+                            }
+                            state.fileStream = await handle.createWritable();
+                            size === 0 ? handleEmptyFile() : sendJSON({ type: 'file-ready' });
+                        } catch (e) {
+                            const errorMessage = `File "${path}" could not be copied. Skip this file?`;
+                            let yes = confirm(errorMessage);
+                            if (yes) sendJSON({ type: 'file-done' });
+                            else
+                            {
+                                UI.setTransferStatus(state.incomingBatch.id, `Failed to download ${path}`, true);
+                                sendJSON({ type: 'error', id: state.incomingBatch.id, message: `Failed to download ${path}` });
+                            }
+                        }
+                    } else {
+                        size === 0 ? handleEmptyFile() : sendJSON({ type: 'file-ready' });
+                    }
+                    break;
+                case 'file-ready': sendFileChunks(); break;
+                case 'file-done': sendNextFile(); break;
+                case 'batch-done':
+                    UI.setTransferStatus(state.incomingBatch.id, "Done");
+                    state.incomingBatch = null;
+                    break;
+                case 'error':
+                    UI.setTransferStatus(id, `Error: ${message}`, true);
+                    if (state.currentBatch?.id === id) {
+                        state.batchQueue.shift();
+                        processNextBatch();
+                    }
+                    break;
+            }
+        }
+
+        async function handleEmptyFile() {
+            if (state.fileStream) { await state.fileStream.close(); state.fileStream = null; }
+            else downloadBlob([], state.incomingFilePath.split('/').pop());
+            sendJSON({ type: 'file-done' });
+        }
+
+        async function handleChunk(data) {
+            state.fileStream ? await state.fileStream.write(data) : state.fallbackChunks.push(data);
+            
+            state.incomingReceivedSize += data.byteLength;
+            state.incomingBatch.transferred += data.byteLength;
+            
+            UI.updateProgress(state.incomingBatch.id, state.incomingBatch.transferred, state.incomingBatch.totalSize);
+
+            if (state.incomingReceivedSize === state.incomingExpectedSize) {
+                if (state.fileStream) { await state.fileStream.close(); state.fileStream = null; }
+                else downloadBlob(state.fallbackChunks, state.incomingFilePath.split('/').pop());
+                
+                sendJSON({ type: 'file-done' });
+            }
+        }
+
+        function processNextBatch() {
+            if (!state.batchQueue.length) { state.isSending = false; return; }
+            state.isSending = true;
+            state.currentBatch = state.batchQueue[0];
+            UI.setTransferStatus(state.currentBatch.id, "Waiting for receiver...");
+            sendJSON({ 
+                type: 'batch-meta', id: state.currentBatch.id, name: state.currentBatch.name, 
+                totalSize: state.currentBatch.totalSize, isSingleFile: state.currentBatch.isSingleFile, 
+                fileCount: state.currentBatch.files.length 
+            });
+        }
+
+        function sendNextFile() {
+            if (!state.currentBatch) return;
+            if (!state.currentBatch.files.length) {
+                sendJSON({ type: 'batch-done', id: state.currentBatch.id });
+                UI.setTransferStatus(state.currentBatch.id, "Done");
+                state.batchQueue.shift();
+                processNextBatch();
+                return;
+            }
+            state.currentFile = state.currentBatch.files.shift();
+            sendJSON({ type: 'file-meta', path: state.currentFile.path, size: state.currentFile.file.size });
+        }
+
+        function sendFileChunks() {
+            const { file } = state.currentFile;
+            let offset = 0;
+            state.dataChannel.bufferedAmountLowThreshold = CONFIG.BUFFER_THRESHOLD;
+            UI.setTransferStatus(state.currentBatch.id, "Sending...");
+
+            const push = () => {
+                if (offset >= file.size) return;
+                if (state.dataChannel.bufferedAmount > CONFIG.BUFFER_THRESHOLD) {
+                    state.dataChannel.onbufferedamountlow = () => { state.dataChannel.onbufferedamountlow = null; push(); };
+                    return;
+                }
+                file.slice(offset, offset + CONFIG.CHUNK_SIZE).arrayBuffer().then(buf => {
+                    state.dataChannel.send(buf);
+                    offset += buf.byteLength;
+                    state.currentBatch.transferred += buf.byteLength;
+                    UI.updateProgress(state.currentBatch.id, state.currentBatch.transferred, state.currentBatch.totalSize);
+                    push();
+                });
+            };
+            push();
+        }
+
+        $('btn-accept').onclick = async () => {
+            $('accept-overlay').classList.add('hidden');
+            try {
+                if (state.hasFSAPI) {
+                    const opts = { startIn: "downloads" };
+                    state.incomingBatch.isSingleFile 
+                        ? (state.singleFileHandle = await window.showSaveFilePicker({ ...opts, suggestedName: state.incomingBatch.name }))
+                        : (state.baseDirHandle = await window.showDirectoryPicker({ ...opts, mode: 'readwrite' }));
+                }
+                UI.createTransferItem(state.incomingBatch.id, state.incomingBatch.name, 'in', state.incomingBatch.totalSize);
+                UI.setTransferStatus(state.incomingBatch.id, "Receiving...");
+                sendJSON({ type: 'batch-accept', id: state.incomingBatch.id });
+            } catch (e) {
+                sendJSON({ type: 'error', id: state.incomingBatch.id, message: 'Cancelled folder selection.' });
+            }
+        };
+
+        $('btn-reject').onclick = () => {
+            $('accept-overlay').classList.add('hidden');
+            UI.createTransferItem(state.incomingBatch.id, state.incomingBatch.name, 'in', state.incomingBatch.totalSize);
+            UI.setTransferStatus(state.incomingBatch.id, "Rejected", true);
+            sendJSON({ type: 'error', id: state.incomingBatch.id, message: 'Rejected by receiver.' });
+        };
+
+        function queueFiles(files) {
+            if (!files.length) return;
+            const dirs = new Map(), singles = [];
+
+            files.forEach(f => {
+                const root = f.path.split('/')[0];
+                f.path.includes('/') ? (dirs.has(root) ? dirs.get(root).push(f) : dirs.set(root, [f])) : singles.push(f);
+            });
+
+            const addToQueue = (name, list, isSingle) => {
+                const totalSize = list.reduce((sum, f) => sum + f.file.size, 0);
+                const batch = { id: 'b-' + Math.random().toString(36).slice(2,9), name, totalSize, isSingleFile: isSingle, files: list, transferred: 0 };
+                state.batchQueue.push(batch);
+                UI.createTransferItem(batch.id, name, 'out', totalSize);
+            };
+
+            singles.forEach(f => addToQueue(f.file.name, [f], true));
+            dirs.forEach((list, name) => addToQueue(name, list, false));
+
+            if (!state.isSending && state.dataChannel?.readyState === 'open') processNextBatch();
+        }
+
+        const dz = $('drop-zone');
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(e => dz.addEventListener(e, ev => { ev.preventDefault(); ev.stopPropagation(); }));
+        ['dragenter', 'dragover'].forEach(e => dz.addEventListener(e, () => dz.classList.add('dragover')));
+        ['dragleave', 'drop'].forEach(e => dz.addEventListener(e, () => dz.classList.remove('dragover')));
+
+        async function readEntry(item, path = '') {
+            const files = [];
+            if (item.isFile) {
+                files.push({ file: await new Promise(r => item.file(r)), path: path + item.name });
+            } else if (item.isDirectory) {
+                const reader = item.createReader();
+                const entries = await new Promise(r => reader.readEntries(r));
+                for (const e of entries) files.push(...await readEntry(e, path + item.name + "/"));
+            }
+            return files;
+        }
+
+        dz.addEventListener('drop', async e => {
+            const files = [];
+            if (e.dataTransfer.items) {
+                for (const item of e.dataTransfer.items) {
+                    if (item.kind === 'file') files.push(...await readEntry(item.webkitGetAsEntry()));
+                }
+            } else {
+                for (const f of e.dataTransfer.files) files.push({ file: f, path: f.name });
+            }
+            queueFiles(files);
+        });
+
+        $('file-input').addEventListener('change', e => {
+            queueFiles([...e.target.files].map(f => ({ file: f, path: f.webkitRelativePath || f.name })));
+            e.target.value = '';
+        });
+
+        window.addEventListener('DOMContentLoaded', () => {
+            if (!state.hasFSAPI) $('api-warning').classList.remove('hidden');
+            
+            const params = new URLSearchParams(window.location.search);
+            const hash = window.location.hash.substring(1);
+
+            if (!params.has('offer') && !hash) {
+                state.isHost = true;
+                UI.showView('view-host');
+                initHost();
+            } else {
+                UI.showView('view-client');
+                if (hash) {
+                    $('client-loading').classList.remove('hidden');
+                    initClient(null, hash);
+                } else {
+                    initClient(decodeURIComponent(params.get('offer')));
+                }
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
+        });
+    </script>
+</body>
+</html>
