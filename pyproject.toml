@@ -1,2 +1,12 @@
+[project]
+name = "jfshare"
+version = "0.1.0"
+description = "JFShare project"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+]
+
 [tool.vercel]
 entrypoint = "api:app"
