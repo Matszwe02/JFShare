@@ -24,3 +24,6 @@ available under these 2 links:
 ## But where's the catch?
 
 You are the server - files are available as long as you maintain the connection. You can not upload the files to be downloaded later. Server only pairs devices.
+
+
+*Disclaimer: This app was vibe-coded. Do whatever you want with this information.
