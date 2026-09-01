@@ -5,7 +5,11 @@ Just File Share - share files with no size limit, unlimited bandwidth, no sign-i
 
 ## Official instance:
 
+available under these 2 links:
+
 ### https://matszwe02.github.io/JFShare
+
+### https://jfshare.vercel.app
 
 
 ## Share files with ease
