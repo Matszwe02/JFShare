@@ -50,7 +50,8 @@ def create_offer():
 def patch_offer(code: str, patch: OfferPatch):
     session = sessions.get(code)
     if session is None:
-        raise HTTPException(status_code=404, detail="Not found")
+        sessions[code] = {"offer": None, "answer": None, "created": time.time()}
+        session = sessions.get(code)
     for field in patch.model_fields_set:
         session[field] = getattr(patch, field)
     return session
