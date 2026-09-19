@@ -378,6 +378,335 @@
             background: var(--gray);
             color: var(--text);
         }
+
+        #mount-ui {
+            position: fixed;
+            inset: 0;
+            z-index: 500;
+            background: var(--bg);
+        }
+
+        #mount-sharing {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #mount-sharing h1 {
+            animation: pulse 1.8s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.35; }
+        }
+
+        #mount-manager {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            padding: 1rem 1.25rem;
+            gap: 0.75rem;
+            text-align: left;
+        }
+
+        #mount-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        #upload-status {
+            width: 260px;
+            flex-shrink: 0;
+            padding: 7px 12px 8px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: #fff;
+        }
+
+        #upload-status-row {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 0.5rem;
+            font-size: 0.75rem;
+            margin-bottom: 5px;
+        }
+
+        #upload-status-text {
+            font-weight: 600;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        #upload-status-size {
+            color: #86868b;
+            white-space: nowrap;
+        }
+
+        #upload-status-pct {
+            color: var(--primary);
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        .upload-track {
+            height: 6px;
+            background: var(--gray);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        #upload-status-bar {
+            height: 100%;
+            width: 0;
+            background: var(--primary);
+            transition: width 0.1s linear;
+        }
+
+        #upload-status-bar.success {
+            background: var(--success);
+        }
+
+        #upload-status-bar.failed {
+            background: var(--danger);
+        }
+
+        #mount-crumbs {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+            font-weight: 600;
+            white-space: nowrap;
+            overflow-x: auto;
+            min-width: 180px;
+            padding: 2px 0;
+        }
+
+        .crumb {
+            padding: 4px 8px;
+            border-radius: 6px;
+            cursor: pointer;
+            color: var(--primary);
+        }
+
+        .crumb:hover {
+            background: var(--gray);
+        }
+
+        .crumb.current {
+            color: var(--text);
+            cursor: default;
+        }
+
+        .crumb.drop-target {
+            background: #e8f0fe;
+            outline: 1px solid var(--primary);
+        }
+
+        .crumb-sep {
+            color: #86868b;
+        }
+
+        .tool-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            border: 1px solid var(--border);
+            background: #fff;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            cursor: pointer;
+            color: var(--text);
+            font-family: var(--font);
+        }
+
+        .tool-btn:hover:not(:disabled) {
+            border-color: var(--primary);
+            color: var(--primary);
+        }
+
+        .tool-btn:disabled {
+            opacity: 0.45;
+            cursor: default;
+        }
+
+        .tool-btn svg {
+            width: 16px;
+            height: 16px;
+        }
+
+        #mount-table-wrap {
+            flex: 1;
+            min-height: 0;
+            overflow: auto;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+        }
+
+        #mount-table-wrap.drag-highlight {
+            border: 2px dashed var(--primary);
+        }
+
+        #mount-table {
+            width: 100%;
+            min-width: 640px;
+            border-collapse: collapse;
+            font-size: 0.92rem;
+        }
+
+        #mount-table th {
+            text-align: left;
+            padding: 0.6rem 0.9rem;
+            border-bottom: 1px solid var(--border);
+            background: var(--gray);
+            color: #86868b;
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+
+        #mount-table td {
+            padding: 0.55rem 0.9rem;
+            border-bottom: 1px solid var(--gray);
+        }
+
+        #mount-table tbody tr:hover {
+            background: #f8fafd;
+        }
+
+        #mount-table tbody tr.drop-target {
+            background: #e8f0fe;
+            outline: 1px solid var(--primary);
+            outline-offset: -1px;
+        }
+
+        #mount-table tbody tr[draggable] {
+            cursor: grab;
+        }
+
+        .cell-name {
+            align-items: center;
+            gap: 0.6rem;
+            font-weight: 500;
+        }
+
+        .cell-name span {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+            padding-left: 8pt;
+            display: inline-block;
+        }
+
+        .cell-name svg {
+            width: 18px;
+            height: 18px;
+            flex-shrink: 0;
+            color: var(--primary);
+        }
+
+        .cell-size, .cell-date {
+            color: #86868b;
+            white-space: nowrap;
+        }
+
+        .cell-actions {
+            text-align: right;
+            white-space: nowrap;
+            width: 1%;
+        }
+
+        .row-btn {
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 6px;
+            color: #86868b;
+        }
+
+        .row-btn:hover {
+            background: var(--gray);
+            color: var(--primary);
+        }
+
+        .row-btn svg {
+            width: 16px;
+            height: 16px;
+            display: block;
+        }
+
+        #mount-statusbar {
+            display: flex;
+            justify-content: space-between;
+            color: #86868b;
+            font-size: 0.85rem;
+        }
+
+        #mount-empty {
+            padding: 3rem;
+            text-align: center;
+            color: #86868b;
+        }
+
+        #preview-box {
+            background: var(--bg);
+            border-radius: 12px;
+            width: 90%;
+            max-width: 1000px;
+            height: 90%;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        #preview-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 1rem;
+            padding: 0.75rem 1.25rem;
+            border-bottom: 1px solid var(--border);
+            font-weight: 600;
+        }
+
+        #preview-name {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        #preview-frame {
+            flex: 1;
+            width: 100%;
+            border: none;
+            background: #fff;
+        }
+
+        #busy-box {
+            background: var(--bg);
+            padding: 1.5rem 2.5rem;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            font-weight: 600;
+        }
     </style>
 </head>
 
@@ -432,6 +761,7 @@
             <p style="font-size: 0.9rem; margin-top: 0.5rem;">or click to browse</p>
             <input type="file" id="file-input" multiple>
         </div>
+        <button id="btn-mount" class="tool-btn hidden" style="margin-top: 1.5rem;"></button>
         <div class="transfer-list" id="transfer-list"></div>
     </div>
 
@@ -446,6 +776,68 @@
                 <button class="btn btn-primary" id="btn-accept">Accept</button>
                 <button class="btn btn-secondary" id="btn-reject">Reject</button>
             </div>
+        </div>
+    </div>
+
+    <!-- MOUNT MODE UI -->
+    <div id="mount-ui" class="hidden">
+        <div id="mount-sharing" class="hidden">
+            <h1>Sharing your directory&hellip;</h1>
+        </div>
+        <div id="mount-manager" class="hidden">
+            <div id="mount-toolbar">
+                <div id="mount-crumbs"></div>
+                <div id="upload-status" class="hidden">
+                    <div id="upload-status-row">
+                        <span id="upload-status-text"></span>
+                        <span id="upload-status-size"></span>
+                        <span id="upload-status-pct"></span>
+                    </div>
+                    <div class="upload-track"><div id="upload-status-bar"></div></div>
+                </div>
+                <button id="btn-new-folder" class="tool-btn"></button>
+                <button id="btn-upload" class="tool-btn"></button>
+                <button id="btn-paste" class="tool-btn" disabled></button>
+                <button id="btn-refresh" class="tool-btn"></button>
+            </div>
+            <div id="mount-table-wrap">
+                <table id="mount-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Size</th>
+                            <th>Modified</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="mount-tbody"></tbody>
+                </table>
+                <div id="mount-empty" class="hidden">This folder is empty</div>
+            </div>
+            <div id="mount-statusbar">
+                <span id="mount-count"></span>
+                <span id="mount-share-name"></span>
+            </div>
+            <input type="file" id="upload-input" multiple class="hidden">
+        </div>
+    </div>
+
+    <!-- BUSY OVERLAY -->
+    <div id="busy-overlay" class="overlay hidden">
+        <div id="busy-box">
+            <div class="spinner"></div>
+            <span id="busy-text"></span>
+        </div>
+    </div>
+
+    <!-- PREVIEW OVERLAY -->
+    <div id="preview-overlay" class="overlay hidden">
+        <div id="preview-box">
+            <div id="preview-header">
+                <span id="preview-name"></span>
+                <button id="preview-close" class="row-btn" title="Close"></button>
+            </div>
+            <iframe id="preview-frame" sandbox="allow-same-origin"></iframe>
         </div>
     </div>
 
@@ -481,7 +873,9 @@
             incomingBatch: null, incomingExpectedSize: 0, incomingReceivedSize: 0,
             incomingFilePath: '', fallbackChunks: [], fileStream: null,
             baseDirHandle: null, singleFileHandle: null,
-            messageQueue: [], isProcessingMessage: false
+            messageQueue: [], isProcessingMessage: false,
+            zipEntries: null,
+            mount: null
         };
 
         const sanitizeFilename = (name) => name.replace(/[\\/:*?"<>|]/g, '_');
@@ -594,7 +988,7 @@
                 $('incoming-filesize').innerText = `${formatBytes(batch.totalSize)} ${batch.fileCount > 1 ? `(${batch.fileCount} items)` : ''}`;
                 $('incoming-prompt').innerHTML = state.hasFSAPI
                     ? `Select a <strong>${batch.isSingleFile ? 'save location' : 'save folder'}</strong>.`
-                    : `<strong>Accept download</strong> (In-Memory mode)`;
+                    : (batch.isSingleFile ? `<strong>Accept download</strong> (In-Memory mode)` : `<strong>Accept download</strong> (saved as a ZIP file)`);
                 $('accept-overlay').classList.remove('hidden');
             }
         };
@@ -750,12 +1144,15 @@
 
         async function handleSignal(msg)
         {
+            if (await handleMountSignal(msg)) return;
+
             const { type, id, name, totalSize, isSingleFile, fileCount, path, size, message } = msg;
 
             switch (type)
             {
                 case 'batch-meta':
                     state.incomingBatch = { ...msg, transferred: 0 };
+                    state.zipEntries = (!state.hasFSAPI && !msg.isSingleFile) ? [] : null;
                     UI.showIncomingModal(state.incomingBatch);
                     break;
                 case 'batch-accept': sendNextFile(); break;
@@ -803,6 +1200,12 @@
                 case 'batch-done':
                     if (state.incomingBatch)
                     {
+                        if (state.zipEntries)
+                        {
+                            UI.setTransferStatus(state.incomingBatch.id, "Packing ZIP...");
+                            downloadBlob(buildZip(state.zipEntries), `${sanitizeFilename(state.incomingBatch.name)}.zip`);
+                            state.zipEntries = null;
+                        }
                         UI.setTransferStatus(state.incomingBatch.id, "Done");
                         state.incomingBatch = null;
                     }
@@ -822,6 +1225,10 @@
         async function handleEmptyFile()
         {
             if (state.fileStream) { await state.fileStream.close(); state.fileStream = null; }
+            else if (state.zipEntries)
+            {
+                pushZipEntry(state.incomingFilePath, []);
+            }
             else
             {
                 downloadBlob([], state.incomingFilePath.split('/').pop());
@@ -830,8 +1237,43 @@
             sendJSON({ type: 'file-done' });
         }
 
+        function pushZipEntry(path, chunks)
+        {
+            let crc = -1, size = 0;
+            for (const c of chunks)
+            {
+                crc = crc32(crc, new Uint8Array(c));
+                size += c.byteLength;
+            }
+            state.zipEntries.push({ name: path, chunks, size, crc: (crc ^ -1) >>> 0, lastModified: Date.now() });
+        }
+
         async function handleChunk(data)
         {
+            if (state.mount?.role === 'server' && state.mount.write)
+            {
+                const w = state.mount.write;
+                try
+                {
+                    await w.writable.write(data);
+                } catch (err)
+                {
+                    state.mount.write = null;
+                    sendJSON({ type: 'fs-error', op: 'upload', message: `Failed to write "${w.path}"` });
+                }
+                return;
+            }
+
+            if (state.mount?.role === 'client' && state.mount.read)
+            {
+                const r = state.mount.read;
+                r.chunks.push(data);
+                r.received += data.byteLength;
+                r.onProgress?.(r.received, r.expected);
+                if (r.expected >= 0 && r.received >= r.expected) finishRead();
+                return;
+            }
+
             if (!state.incomingBatch) return;
 
             if (state.fileStream)
@@ -853,6 +1295,10 @@
                 {
                     await state.fileStream.close();
                     state.fileStream = null;
+                } else if (state.zipEntries)
+                {
+                    pushZipEntry(state.incomingFilePath, state.fallbackChunks);
+                    state.fallbackChunks = [];
                 } else
                 {
                     downloadBlob(state.fallbackChunks, state.incomingFilePath.split('/').pop());
@@ -919,6 +1365,1199 @@
             };
             push();
         }
+
+        /* ---------------- Mount directory mode ---------------- */
+
+        const ICONS = {
+            folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>',
+            file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>',
+            download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>',
+            copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>',
+            move: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 9 2 12 5 15"></polyline><polyline points="9 5 12 2 15 5"></polyline><polyline points="15 19 12 22 9 19"></polyline><polyline points="19 9 22 12 19 15"></polyline><line x1="2" y1="12" x2="22" y2="12"></line><line x1="12" y1="2" x2="12" y2="22"></line></svg>',
+            rename: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"></path></svg>',
+            trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>',
+            upload: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>',
+            folderPlus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path><line x1="12" y1="11" x2="12" y2="17"></line><line x1="9" y1="14" x2="15" y2="14"></line></svg>',
+            refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>',
+            clipboard: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>',
+            x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>'
+        };
+
+        const PREVIEW_IMAGE = {
+            png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+            bmp: 'image/bmp', ico: 'image/x-icon', svg: 'image/svg+xml', avif: 'image/avif'
+        };
+
+        const PREVIEW_AUDIO = {
+            mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/ogg',
+            m4a: 'audio/mp4', aac: 'audio/aac', flac: 'audio/flac', weba: 'audio/webm'
+        };
+
+        const PREVIEW_VIDEO = {
+            mp4: 'video/mp4', m4v: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime'
+        };
+
+        const PREVIEW_TEXT = new Set([
+            'txt', 'text', 'log', 'md', 'markdown', 'csv', 'tsv', 'json', 'ndjson', 'yaml', 'yml', 'toml', 'ini',
+            'cfg', 'conf', 'config', 'env', 'properties',
+            'xml', 'html', 'htm', 'xhtml', 'xsl', 'xslt', 'dtd', 'rss', 'atom',
+            'css', 'scss', 'sass', 'less', 'styl', 'js', 'mjs', 'cjs', 'ts', 'mts', 'cts', 'jsx', 'tsx', 'vue', 'svelte', 'astro',
+            'py', 'pyw', 'rb', 'erb', 'go', 'rs', 'java', 'kt', 'kts', 'scala', 'groovy', 'gradle', 'cs', 'fs', 'vb',
+            'c', 'h', 'cpp', 'hpp', 'cc', 'cxx', 'hh', 'hxx', 'm', 'mm', 'swift', 'dart', 'zig', 'nim', 'sol', 'ino',
+            'php', 'phtml', 'pl', 'pm', 'lua', 'r', 'jl', 'tcl', 'sql', 'ps1', 'psm1', 'asm', 's',
+            'sh', 'bash', 'zsh', 'fish', 'ksh', 'bat', 'cmd', 'ahk',
+            'cmake', 'mk', 'dockerfile', 'containerfile', 'makefile', 'rakefile', 'gemfile', 'procfile', 'vagrantfile',
+            'gitignore', 'gitattributes', 'editorconfig', 'npmrc', 'babelrc', 'prettierrc', 'eslintrc',
+            'license', 'readme', 'changelog', 'authors', 'contributors', 'notice', 'todo', 'diff', 'patch',
+            'rst', 'adoc', 'asciidoc', 'tex', 'srt', 'vtt', 'nfo'
+        ]);
+
+        const PREVIEW_BINARY = new Set([
+            'zip', 'rar', '7z', 'gz', 'tgz', 'bz2', 'xz', 'zst', 'tar', 'iso', 'img', 'dmg', 'pkg', 'deb', 'rpm', 'msi',
+            'exe', 'dll', 'so', 'dylib', 'bin', 'o', 'obj', 'lib', 'a', 'class', 'jar', 'war', 'apk', 'pyc', 'pyd', 'wasm',
+            'woff', 'woff2', 'ttf', 'otf', 'eot', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp', 'rtf',
+            'psd', 'psb', 'ai', 'eps', 'sketch', 'fig', 'xd', 'xcf', 'heic', 'heif', 'tif', 'tiff', 'dng',
+            'db', 'sqlite', 'sqlite3', 'mdb', 'accdb', 'dat', 'pdb', 'keystore', 'jks', 'p12', 'pfx'
+        ]);
+
+        $('btn-mount').innerHTML = `${ICONS.folder}<span>Mount directory</span>`;
+        $('btn-new-folder').innerHTML = `${ICONS.folderPlus}<span>New folder</span>`;
+        $('btn-upload').innerHTML = `${ICONS.upload}<span>Upload</span>`;
+        $('btn-paste').innerHTML = `${ICONS.clipboard}<span>Paste</span>`;
+        $('btn-refresh').innerHTML = `${ICONS.refresh}<span>Refresh</span>`;
+        $('preview-close').innerHTML = ICONS.x;
+
+        const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        const joinPath = (dir, name) => dir ? `${dir}/${name}` : name;
+        const baseName = p => String(p).split('/').filter(Boolean).pop() || '';
+        const parentOf = p => String(p).split('/').filter(Boolean).slice(0, -1).join('/');
+        const isValidName = n => !!n && !/[\\/:*?"<>|]/.test(n) && n !== '.' && n !== '..';
+
+        let previewUrl = null;
+
+        const CRC_TABLE = (() =>
+        {
+            const t = new Uint32Array(256);
+            for (let n = 0; n < 256; n++)
+            {
+                let c = n;
+                for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+                t[n] = c;
+            }
+            return t;
+        })();
+
+        const crc32 = (crc, buf) =>
+        {
+            for (let i = 0; i < buf.length; i++) crc = CRC_TABLE[(crc ^ buf[i]) & 0xFF] ^ (crc >>> 8);
+            return crc;
+        };
+
+        const dosDateTime = (ms) =>
+        {
+            const d = new Date(ms || Date.now());
+            return {
+                time: (d.getHours() << 11) | (d.getMinutes() << 5) | Math.floor(d.getSeconds() / 2),
+                date: ((Math.max(1980, d.getFullYear()) - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate()
+            };
+        };
+
+        function buildZip(entries)
+        {
+            const parts = [], central = [];
+            let offset = 0, cdSize = 0;
+            for (const e of entries)
+            {
+                const nameBytes = new TextEncoder().encode(e.name);
+                const { time, date } = dosDateTime(e.lastModified);
+                const lh = new DataView(new ArrayBuffer(30));
+                lh.setUint32(0, 0x04034b50, true);
+                lh.setUint16(4, 20, true);
+                lh.setUint16(6, 0x0800, true);
+                lh.setUint16(10, time, true);
+                lh.setUint16(12, date, true);
+                lh.setUint32(14, e.crc >>> 0, true);
+                lh.setUint32(18, e.size, true);
+                lh.setUint32(22, e.size, true);
+                lh.setUint16(26, nameBytes.length, true);
+                parts.push(new Uint8Array(lh.buffer), nameBytes, ...(e.chunks || []));
+                const cd = new DataView(new ArrayBuffer(46));
+                cd.setUint32(0, 0x02014b50, true);
+                cd.setUint16(4, 20, true);
+                cd.setUint16(6, 20, true);
+                cd.setUint16(8, 0x0800, true);
+                cd.setUint16(12, time, true);
+                cd.setUint16(14, date, true);
+                cd.setUint32(16, e.crc >>> 0, true);
+                cd.setUint32(20, e.size, true);
+                cd.setUint32(24, e.size, true);
+                cd.setUint16(28, nameBytes.length, true);
+                cd.setUint32(42, offset, true);
+                central.push(new Uint8Array(cd.buffer), nameBytes);
+                offset += 30 + nameBytes.length + e.size;
+                cdSize += 46 + nameBytes.length;
+            }
+            const eocd = new DataView(new ArrayBuffer(22));
+            eocd.setUint32(0, 0x06054b50, true);
+            eocd.setUint16(8, entries.length, true);
+            eocd.setUint16(10, entries.length, true);
+            eocd.setUint32(12, cdSize, true);
+            eocd.setUint32(16, offset, true);
+            return [...parts, ...central, new Uint8Array(eocd.buffer)];
+        }
+
+        function streamOut(source, totalSize, onProgress)
+        {
+            return new Promise((resolve, reject) =>
+            {
+                const dc = state.dataChannel;
+                let offset = 0;
+                dc.bufferedAmountLowThreshold = CONFIG.BUFFER_THRESHOLD;
+                const push = () =>
+                {
+                    if (offset >= totalSize) return resolve();
+                    if (dc.readyState !== 'open') return reject(new Error('Connection lost'));
+                    if (dc.bufferedAmount > CONFIG.BUFFER_THRESHOLD)
+                    {
+                        dc.onbufferedamountlow = () => { dc.onbufferedamountlow = null; push(); };
+                        return;
+                    }
+                    source.slice(offset, offset + CONFIG.CHUNK_SIZE).arrayBuffer().then(buf =>
+                    {
+                        dc.send(buf);
+                        offset += buf.byteLength;
+                        onProgress?.(offset, totalSize);
+                        push();
+                    }).catch(reject);
+                };
+                push();
+            });
+        }
+
+        const showBusy = (text) =>
+        {
+            $('busy-text').innerText = text;
+            $('busy-overlay').classList.remove('hidden');
+            return t => { $('busy-text').innerText = t; };
+        };
+
+        const busyOff = () => $('busy-overlay').classList.add('hidden');
+
+        /* --- Sharer (server) side --- */
+
+        async function startMountServer()
+        {
+            if (!state.hasFSAPI || state.mount) return;
+            if (state.isSending || state.incomingBatch) { UI.toast('Wait for current transfers to finish first'); return; }
+            let dirHandle;
+            try
+            {
+                dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+            } catch (e)
+            {
+                return;
+            }
+            state.batchQueue = [];
+            state.currentBatch = null;
+            state.isSending = false;
+            state.mount = { role: 'server', dirHandle, name: dirHandle.name, opQueue: Promise.resolve(), write: null, streaming: false };
+            enterMountUI('server');
+            sendJSON({ type: 'mount-start', name: dirHandle.name });
+        }
+
+        function enterMountUI(role)
+        {
+            document.body.classList.add('mount-active');
+            $('mount-ui').classList.remove('hidden');
+            $('mount-sharing').classList.toggle('hidden', role !== 'server');
+            $('mount-manager').classList.toggle('hidden', role !== 'client');
+        }
+
+        function exitMountUI()
+        {
+            document.body.classList.remove('mount-active');
+            $('mount-ui').classList.add('hidden');
+            closePreview();
+            $('busy-overlay').classList.add('hidden');
+        }
+
+        const splitParts = p => String(p || '').split('/').filter(Boolean);
+
+        async function fsGetDir(path)
+        {
+            let dir = state.mount.dirHandle;
+            for (const p of splitParts(path)) dir = await dir.getDirectoryHandle(p);
+            return dir;
+        }
+
+        async function fsGetParent(path, createDirs = false)
+        {
+            const parts = splitParts(path);
+            const name = parts.pop();
+            if (!name) throw new Error('Invalid path');
+            let dir = state.mount.dirHandle;
+            for (const p of parts) dir = await dir.getDirectoryHandle(p, { create: createDirs });
+            return { dir, name };
+        }
+
+        async function fsGetEntry(dir, name)
+        {
+            try { return { handle: await dir.getFileHandle(name), isDir: false }; }
+            catch (e) { return { handle: await dir.getDirectoryHandle(name), isDir: true }; }
+        }
+
+        async function fsEntryExists(dir, name)
+        {
+            try { await dir.getFileHandle(name); return true; } catch (e) { }
+            try { await dir.getDirectoryHandle(name); return true; } catch (e) { }
+            return false;
+        }
+
+        async function fsUniqueName(dir, name)
+        {
+            if (!(await fsEntryExists(dir, name))) return name;
+            const dot = name.lastIndexOf('.');
+            const stem = dot > 0 ? name.slice(0, dot) : name;
+            const ext = dot > 0 ? name.slice(dot) : '';
+            for (let i = 1; i < 1000; i++)
+            {
+                const candidate = `${stem} (${i})${ext}`;
+                if (!(await fsEntryExists(dir, candidate))) return candidate;
+            }
+            return `${stem} (${Date.now()})${ext}`;
+        }
+
+        async function fsCopyInto(handle, destDir, name)
+        {
+            if (handle.kind === 'file')
+            {
+                const file = await handle.getFile();
+                const fh = await destDir.getFileHandle(name, { create: true });
+                await file.stream().pipeTo(await fh.createWritable());
+            } else
+            {
+                const newDir = await destDir.getDirectoryHandle(name, { create: true });
+                for await (const [childName, child] of handle.entries()) await fsCopyInto(child, newDir, childName);
+            }
+        }
+
+        async function fsTransfer(src, destDir, isMove)
+        {
+            if (isMove && parentOf(src) === String(destDir || '')) return;
+            const { dir, name } = await fsGetParent(src);
+            const { handle, isDir } = await fsGetEntry(dir, name);
+            const dest = await fsGetDir(destDir);
+            const destPath = String(destDir || '');
+            if (isDir && (destPath === src || destPath.startsWith(src + '/'))) throw new Error(`Cannot ${isMove ? 'move' : 'copy'} a folder into itself`);
+            if (isMove && !isDir && handle.move && !(await fsEntryExists(dest, name)))
+            {
+                try { await handle.move(dest); return; } catch (e) { }
+            }
+            const finalName = await fsUniqueName(dest, name);
+            await fsCopyInto(handle, dest, finalName);
+            if (isMove) await dir.removeEntry(name, { recursive: true });
+        }
+
+        function fsQueue(op, fn)
+        {
+            state.mount.opQueue = state.mount.opQueue.then(fn).catch(err =>
+            {
+                console.warn(`fs ${op} failed:`, err);
+                sendJSON({ type: 'fs-error', op, message: err?.message || `${err}` });
+            });
+        }
+
+        async function handleFsServerOp(msg)
+        {
+            const M = state.mount;
+            switch (msg.type)
+            {
+                case 'fs-list':
+                    fsQueue('list', async () =>
+                    {
+                        const dir = await fsGetDir(msg.path);
+                        const entries = [];
+                        for await (const [name, handle] of dir.entries())
+                        {
+                            if (handle.kind === 'file')
+                            {
+                                try
+                                {
+                                    const f = await handle.getFile();
+                                    entries.push({ name, isDir: false, size: f.size, lastModified: f.lastModified });
+                                } catch (e)
+                                {
+                                    entries.push({ name, isDir: false, size: 0, lastModified: 0 });
+                                }
+                            } else entries.push({ name, isDir: true, size: 0, lastModified: 0 });
+                        }
+                        sendJSON({ type: 'fs-listing', path: msg.path, entries });
+                    });
+                    break;
+                case 'fs-read':
+                {
+                    if (M.streaming) { sendJSON({ type: 'fs-error', op: 'read', id: msg.id, message: 'Another transfer is in progress' }); break; }
+                    (async () =>
+                    {
+                        try
+                        {
+                            const { dir, name } = await fsGetParent(msg.path);
+                            const file = await (await dir.getFileHandle(name)).getFile();
+                            M.streaming = true;
+                            sendJSON({ type: 'fs-read-start', path: msg.path, id: msg.id, size: file.size });
+                            if (file.size > 0) await streamOut(file, file.size);
+                            sendJSON({ type: 'fs-read-end', path: msg.path, id: msg.id });
+                        } catch (err)
+                        {
+                            sendJSON({ type: 'fs-error', op: 'read', id: msg.id, message: err?.message || `${err}` });
+                        } finally
+                        {
+                            M.streaming = false;
+                        }
+                    })();
+                    break;
+                }
+                case 'fs-rename':
+                    fsQueue('rename', async () =>
+                    {
+                        const { dir, name } = await fsGetParent(msg.path);
+                        const newName = String(msg.newName || '').trim();
+                        if (!isValidName(newName)) throw new Error('Invalid name');
+                        if (newName !== name)
+                        {
+                            if (await fsEntryExists(dir, newName)) throw new Error('An item with that name already exists');
+                            const { handle } = await fsGetEntry(dir, name);
+                            let moved = false;
+                            try { if (handle.move) { await handle.move(newName); moved = true; } } catch (e) { }
+                            if (!moved)
+                            {
+                                await fsCopyInto(handle, dir, newName);
+                                await dir.removeEntry(name, { recursive: true });
+                            }
+                        }
+                        sendJSON({ type: 'fs-ok', op: 'rename' });
+                    });
+                    break;
+                case 'fs-delete':
+                    fsQueue('delete', async () =>
+                    {
+                        const { dir, name } = await fsGetParent(msg.path);
+                        await dir.removeEntry(name, { recursive: true });
+                        sendJSON({ type: 'fs-ok', op: 'delete' });
+                    });
+                    break;
+                case 'fs-copy':
+                    fsQueue('copy', async () =>
+                    {
+                        await fsTransfer(msg.src, msg.destDir, false);
+                        sendJSON({ type: 'fs-ok', op: 'copy' });
+                    });
+                    break;
+                case 'fs-move':
+                    fsQueue('move', async () =>
+                    {
+                        await fsTransfer(msg.src, msg.destDir, true);
+                        sendJSON({ type: 'fs-ok', op: 'move' });
+                    });
+                    break;
+                case 'fs-mkdir':
+                    fsQueue('mkdir', async () =>
+                    {
+                        const { dir, name } = await fsGetParent(msg.path);
+                        if (await fsEntryExists(dir, name)) throw new Error('An item with that name already exists');
+                        await dir.getDirectoryHandle(name, { create: true });
+                        sendJSON({ type: 'fs-ok', op: 'mkdir' });
+                    });
+                    break;
+                case 'fs-write-start':
+                    try
+                    {
+                        if (M.write) throw new Error('Another upload is in progress');
+                        const { dir, name } = await fsGetParent(msg.path, true);
+                        const fh = await dir.getFileHandle(sanitizeFilename(name), { create: true });
+                        M.write = { writable: await fh.createWritable(), path: msg.path };
+                        sendJSON({ type: 'fs-ready' });
+                    } catch (err)
+                    {
+                        sendJSON({ type: 'fs-error', op: 'upload', message: err?.message || `${err}` });
+                    }
+                    break;
+                case 'fs-write-end':
+                    {
+                        const w = M.write;
+                        if (!w) break;
+                        M.write = null;
+                        try
+                        {
+                            await w.writable.close();
+                            sendJSON({ type: 'fs-ok', op: 'upload' });
+                        } catch (err)
+                        {
+                            sendJSON({ type: 'fs-error', op: 'upload', message: err?.message || `${err}` });
+                        }
+                    }
+                    break;
+            }
+        }
+
+        /* --- Mount message routing --- */
+
+        async function handleMountSignal(msg)
+        {
+            const M = state.mount;
+            const t = msg.type;
+
+            if (M?.role === 'server' && t.startsWith('fs-'))
+            {
+                await handleFsServerOp(msg);
+                return true;
+            }
+
+            switch (t)
+            {
+                case 'mount-start':
+                    if (M?.role === 'server') sendJSON({ type: 'mount-error', message: 'Already sharing a directory' });
+                    else startMountClient(msg.name);
+                    return true;
+                case 'mount-error':
+                    if (M?.role === 'server')
+                    {
+                        state.mount = null;
+                        exitMountUI();
+                        UI.toast(msg.message || 'Directory sharing was rejected');
+                    }
+                    return true;
+                case 'fs-listing':
+                    if (M?.role === 'client')
+                    {
+                        if (M.pendingList && msg.path === M.pendingListPath)
+                        {
+                            const resolveList = M.pendingList;
+                            M.pendingList = null;
+                            M.pendingListPath = null;
+                            resolveList(msg.entries || null);
+                        }
+                        if (msg.path === M.cwd)
+                        {
+                            M.entries = [...(msg.entries || [])].sort((a, b) => (b.isDir - a.isDir) || a.name.localeCompare(b.name, undefined, { numeric: true }));
+                            renderEntries();
+                        }
+                    }
+                    return true;
+                case 'fs-ready':
+                case 'fs-ok':
+                    if (M?.role === 'client')
+                    {
+                        if (msg.op === 'upload' || t === 'fs-ready')
+                        {
+                            if (M.uploadWait)
+                            {
+                                const w = M.uploadWait;
+                                M.uploadWait = null;
+                                w({ ok: true });
+                            }
+                        } else
+                        {
+                            M.wait?.({ ok: true });
+                            M.wait = null;
+                        }
+                    }
+                    return true;
+                case 'fs-read-start':
+                    if (M?.role === 'client' && M.read && M.read.id === msg.id)
+                    {
+                        M.read.expected = msg.size || 0;
+                        if (M.read.received >= M.read.expected) finishRead();
+                    }
+                    return true;
+                case 'fs-read-end':
+                    if (M?.role === 'client' && M.read && M.read.id === msg.id) finishRead();
+                    return true;
+                case 'fs-error':
+                    if (M)
+                    {
+                        if (M.read && M.read.id === msg.id)
+                        {
+                            const r = M.read;
+                            M.read = null;
+                            r.reject(new Error(msg.message || 'Request failed'));
+                        } else if (msg.op === 'read' && msg.id !== undefined)
+                        {
+                            /* stale or unmatched read error - ignore */
+                        } else if (msg.op === 'upload' && M.uploadWait)
+                        {
+                            const w = M.uploadWait;
+                            M.uploadWait = null;
+                            w({ ok: false, message: msg.message });
+                        } else if (M.pendingList)
+                        {
+                            const resolveList = M.pendingList;
+                            M.pendingList = null;
+                            resolveList(null);
+                        } else if (M.wait)
+                        {
+                            const w = M.wait;
+                            M.wait = null;
+                            w({ ok: false, message: msg.message });
+                        }
+                    }
+                    return true;
+            }
+
+            return t.startsWith('fs-') || t.startsWith('mount-');
+        }
+
+        /* --- File manager (client) side --- */
+
+        function startMountClient(name)
+        {
+            state.incomingBatch = null;
+            $('accept-overlay').classList.add('hidden');
+            state.mount = {
+                role: 'client', name, cwd: '', entries: [], clipboard: null, readSeq: 0,
+                read: null, wait: null, pendingList: null, lock: Promise.resolve(),
+                uploadWait: null, uploadLock: Promise.resolve()
+            };
+            $('mount-share-name').innerText = name;
+            enterMountUI('client');
+            requestListing('');
+        }
+
+        function mountTask(fn)
+        {
+            const M = state.mount;
+            if (!M) return;
+            const run = M.lock.then(fn).catch(err => { if (state.mount) UI.toast(err?.message || 'Operation failed'); });
+            M.lock = run.catch(() => { });
+            return run;
+        }
+
+        function mountOp(msg)
+        {
+            return new Promise((resolve, reject) =>
+            {
+                state.mount.wait = res => res.ok ? resolve() : reject(new Error(res.message || 'Operation failed'));
+                sendJSON(msg);
+            });
+        }
+
+        function uploadWaitOk()
+        {
+            return new Promise((resolve, reject) =>
+            {
+                state.mount.uploadWait = res => res.ok ? resolve() : reject(new Error(res.message || 'Upload failed'));
+            });
+        }
+
+        function requestListing(path)
+        {
+            return new Promise(resolve =>
+            {
+                state.mount.pendingList = resolve;
+                state.mount.pendingListPath = path;
+                sendJSON({ type: 'fs-list', path });
+            });
+        }
+
+        function readRemoteFile(path, onProgress)
+        {
+            return new Promise((resolve, reject) =>
+            {
+                const id = ++state.mount.readSeq;
+                state.mount.read = { id, path, chunks: [], received: 0, expected: -1, onProgress, resolve, reject };
+                sendJSON({ type: 'fs-read', path, id });
+            });
+        }
+
+        function finishRead()
+        {
+            const r = state.mount?.read;
+            if (!r) return;
+            state.mount.read = null;
+            r.resolve(r.chunks);
+        }
+
+        async function refreshListing()
+        {
+            const entries = await requestListing(state.mount.cwd);
+            if (!entries) throw new Error('Failed to list directory');
+        }
+
+        async function navigateTo(path)
+        {
+            state.mount.cwd = path;
+            renderCrumbs();
+            await refreshListing();
+        }
+
+        function renderCrumbs()
+        {
+            const M = state.mount;
+            const parts = M.cwd.split('/').filter(Boolean);
+            let html = `<span class="crumb${M.cwd === '' ? ' current' : ''}" data-path="">${escapeHtml(M.name)}</span>`;
+            let acc = '';
+            for (const p of parts)
+            {
+                acc = joinPath(acc, p);
+                html += `<span class="crumb-sep">/</span><span class="crumb${acc === M.cwd ? ' current' : ''}" data-path="${escapeHtml(acc)}">${escapeHtml(p)}</span>`;
+            }
+            $('mount-crumbs').innerHTML = html;
+        }
+
+        function renderEntries()
+        {
+            const M = state.mount;
+            $('mount-table').classList.toggle('hidden', !M.entries.length);
+            $('mount-empty').classList.toggle('hidden', !!M.entries.length);
+            $('mount-count').innerText = `${M.entries.length} item${M.entries.length === 1 ? '' : 's'}`;
+            $('mount-tbody').innerHTML = M.entries.map(e =>
+            {
+                const path = joinPath(M.cwd, e.name);
+                return `<tr draggable="true" data-path="${escapeHtml(path)}" data-dir="${e.isDir ? 1 : 0}">
+<td class="cell-name" title="${escapeHtml(e.name)}">${e.isDir ? ICONS.folder : ICONS.file}<span>${escapeHtml(e.name)}</span></td>
+<td class="cell-size">${e.isDir ? '&mdash;' : formatBytes(e.size)}</td>
+<td class="cell-date">${e.isDir || !e.lastModified ? '&mdash;' : new Date(e.lastModified).toLocaleString()}</td>
+<td class="cell-actions">
+<button class="row-btn" data-action="download" title="Download">${ICONS.download}</button>
+<button class="row-btn" data-action="copy" title="Copy">${ICONS.copy}</button>
+<button class="row-btn" data-action="cut" title="Move">${ICONS.move}</button>
+<button class="row-btn" data-action="rename" title="Rename">${ICONS.rename}</button>
+<button class="row-btn" data-action="delete" title="Delete">${ICONS.trash}</button>
+</td>
+</tr>`;
+            }).join('');
+            renderCrumbs();
+            $('btn-paste').disabled = !M.clipboard;
+        }
+
+        async function downloadEntry(path, name, isDir)
+        {
+            if (isDir) return window.showDirectoryPicker ? downloadDirectoryFS(path, name) : downloadZip(path, name);
+            if (window.showSaveFilePicker) return downloadFileFS(path, name);
+            const chunks = await readRemoteFile(path);
+            downloadBlob(chunks, name);
+        }
+
+        async function collectZipEntries(path, prefix, out)
+        {
+            const entries = await requestListing(path);
+            if (!entries) throw new Error(`Failed to list "${baseName(path) || '/'}"`);
+            for (const e of entries)
+            {
+                if (e.isDir) await collectZipEntries(joinPath(path, e.name), `${prefix}${e.name}/`, out);
+                else out.push({ path: joinPath(path, e.name), name: `${prefix}${e.name}`, lastModified: e.lastModified });
+            }
+        }
+
+        async function downloadZip(dirPath, name)
+        {
+            const update = showBusy(`Scanning "${name}"…`);
+            try
+            {
+                const files = [];
+                await collectZipEntries(dirPath, '', files);
+                const zipEntries = [];
+                for (let i = 0; i < files.length; i++)
+                {
+                    const f = files[i];
+                    update(`Downloading "${f.name}" (${i + 1}/${files.length})`);
+                    const chunks = await readRemoteFile(f.path);
+                    let crc = -1, size = 0;
+                    for (const c of chunks)
+                    {
+                        crc = crc32(crc, new Uint8Array(c));
+                        size += c.byteLength;
+                    }
+                    zipEntries.push({ name: f.name, chunks, size, crc: (crc ^ -1) >>> 0, lastModified: f.lastModified });
+                }
+                update(`Building "${name}.zip"…`);
+                downloadBlob(buildZip(zipEntries), `${name}.zip`);
+            } finally
+            {
+                busyOff();
+            }
+        }
+
+        async function downloadDirectoryFS(dirPath, name)
+        {
+            let destRoot;
+            try
+            {
+                destRoot = await window.showDirectoryPicker({ mode: 'readwrite', startIn: 'downloads' });
+            } catch (e)
+            {
+                return;
+            }
+            const update = showBusy(`Scanning "${name}"…`);
+            try
+            {
+                const destDir = await destRoot.getDirectoryHandle(sanitizeFilename(name), { create: true });
+                const files = [];
+                let totalSize = 0;
+                const walk = async (path, prefix, dir) =>
+                {
+                    const entries = await requestListing(path);
+                    if (!entries) throw new Error(`Failed to list "${baseName(path) || '/'}"`);
+                    for (const e of entries)
+                    {
+                        if (e.isDir) await walk(joinPath(path, e.name), `${prefix}${e.name}/`, await dir.getDirectoryHandle(sanitizeFilename(e.name), { create: true }));
+                        else
+                        {
+                            files.push({ path: joinPath(path, e.name), name: `${prefix}${e.name}`, size: e.size || 0, dir });
+                            totalSize += e.size || 0;
+                        }
+                    }
+                };
+                await walk(dirPath, '', destDir);
+                let savedSize = 0;
+                const progress = (i, f, extra) => `Downloading "${f.name}" (${i + 1}/${files.length}) — ${totalSize ? Math.round(((savedSize + extra) / totalSize) * 100) : 100}%`;
+                for (let i = 0; i < files.length; i++)
+                {
+                    const f = files[i];
+                    update(progress(i, f, 0));
+                    const fh = await f.dir.getFileHandle(sanitizeFilename(baseName(f.name)), { create: true });
+                    const writable = await fh.createWritable();
+                    try
+                    {
+                        const chunks = await readRemoteFile(f.path, received => update(progress(i, f, received)));
+                        await writable.write(new Blob(chunks));
+                    } finally
+                    {
+                        await writable.close();
+                    }
+                    savedSize += f.size;
+                }
+            } finally
+            {
+                busyOff();
+            }
+        }
+
+        async function downloadFileFS(path, name)
+        {
+            let fileHandle;
+            try
+            {
+                fileHandle = await window.showSaveFilePicker({ suggestedName: sanitizeFilename(name), startIn: 'downloads' });
+            } catch (e)
+            {
+                return;
+            }
+            const update = showBusy(`Downloading "${name}"…`);
+            try
+            {
+                const writable = await fileHandle.createWritable();
+                try
+                {
+                    const chunks = await readRemoteFile(path, (received, total) =>
+                    {
+                        if (total > 0) update(`Downloading "${name}"… ${Math.round((received / total) * 100)}%`);
+                    });
+                    await writable.write(new Blob(chunks));
+                } finally
+                {
+                    await writable.close();
+                }
+            } finally
+            {
+                busyOff();
+            }
+        }
+
+        function looksLikeText(chunks)
+        {
+            const probe = new Uint8Array(chunks.length ? chunks[0] : new ArrayBuffer(0)).subarray(0, 4096);
+            if (probe[0] === 0xff && probe[1] === 0xfe) return 'utf-16le';
+            if (probe[0] === 0xfe && probe[1] === 0xff) return 'utf-16be';
+            for (const b of probe)
+            {
+                if (b < 9 || (b > 13 && b < 32)) return null;
+            }
+            return 'utf-8';
+        }
+
+        async function decodeText(chunks, encoding)
+        {
+            const buf = await new Blob(chunks).arrayBuffer();
+            return new TextDecoder(encoding).decode(buf);
+        }
+
+        function openPreviewUrl(url)
+        {
+            if (previewUrl) { URL.revokeObjectURL(previewUrl); previewUrl = null; }
+            const frame = $('preview-frame');
+            frame.removeAttribute('srcdoc');
+            frame.src = url;
+            $('preview-overlay').classList.remove('hidden');
+        }
+
+        function openPreviewPage(html)
+        {
+            if (previewUrl) { URL.revokeObjectURL(previewUrl); previewUrl = null; }
+            const frame = $('preview-frame');
+            frame.removeAttribute('src');
+            frame.srcdoc = html;
+            $('preview-overlay').classList.remove('hidden');
+        }
+
+        function closePreview()
+        {
+            $('preview-overlay').classList.add('hidden');
+            const frame = $('preview-frame');
+            frame.removeAttribute('srcdoc');
+            frame.src = 'about:blank';
+            if (previewUrl)
+            {
+                URL.revokeObjectURL(previewUrl);
+                previewUrl = null;
+            }
+        }
+
+        async function saveChunks(chunks, name)
+        {
+            if (window.showSaveFilePicker)
+            {
+                try
+                {
+                    const fh = await window.showSaveFilePicker({ suggestedName: sanitizeFilename(name), startIn: 'downloads' });
+                    const w = await fh.createWritable();
+                    try { await w.write(new Blob(chunks)); } finally { await w.close(); }
+                } catch (e) { }
+                return;
+            }
+            downloadBlob(chunks, name);
+        }
+
+        const previewMediaPage = (tag, url) =>
+`<!DOCTYPE html><html><head><meta charset="utf-8"><style>html,body{height:100%;margin:0}body{display:flex;align-items:center;justify-content:center;background:#1d1d1f;overflow:hidden}${tag}{max-width:96%;max-height:96%}audio{width:min(560px,90%)}</style></head><body><${tag} controls preload="metadata" src="${url}"></${tag}></body></html>`;
+
+        const previewTextPage = (text) =>
+`<!DOCTYPE html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#fff}body{color:#1d1d1f;font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}pre{margin:0;padding:16px 20px;white-space:pre;tab-size:4;font:inherit}</style></head><body><pre>${escapeHtml(text)}</pre></body></html>`;
+
+        async function previewFile(path, name)
+        {
+            const ext = (name.includes('.') ? name.split('.').pop() : name).toLowerCase();
+            const imageMime = PREVIEW_IMAGE[ext];
+            const audioMime = PREVIEW_AUDIO[ext];
+            const videoMime = PREVIEW_VIDEO[ext];
+            const knownText = PREVIEW_TEXT.has(ext);
+            const isPdf = ext === 'pdf';
+
+            if (!imageMime && !audioMime && !videoMime && !knownText && !isPdf && PREVIEW_BINARY.has(ext))
+            {
+                UI.toast('No inline preview for this file type — downloading instead');
+                return downloadEntry(path, name, false);
+            }
+
+            const update = showBusy(`Loading "${name}"…`);
+            try
+            {
+                const chunks = await readRemoteFile(path, (done, total) =>
+                {
+                    if (total > 0) update(`Loading "${name}"… ${Math.round((done / total) * 100)}%`);
+                });
+                $('preview-name').innerText = name;
+
+                if (imageMime)
+                {
+                    openPreviewUrl(URL.createObjectURL(new Blob(chunks, { type: imageMime })));
+                    return;
+                }
+                if (isPdf)
+                {
+                    openPreviewUrl(URL.createObjectURL(new Blob(chunks, { type: 'application/pdf' })));
+                    return;
+                }
+                if (videoMime || audioMime)
+                {
+                    const url = URL.createObjectURL(new Blob(chunks, { type: videoMime || audioMime }));
+                    openPreviewPage(previewMediaPage(videoMime ? 'video' : 'audio', url));
+                    previewUrl = url;
+                    return;
+                }
+
+                const encoding = knownText ? 'utf-8' : looksLikeText(chunks);
+                if (!encoding)
+                {
+                    await saveChunks(chunks, name);
+                    return;
+                }
+                openPreviewPage(previewTextPage(await decodeText(chunks, encoding)));
+            } finally
+            {
+                busyOff();
+            }
+        }
+
+        async function rowAction(action, path, isDir)
+        {
+            const M = state.mount;
+            const name = baseName(path);
+            switch (action)
+            {
+                case 'download':
+                    {
+                        const update = showBusy(`Downloading "${name}"…`);
+                        try { return await downloadEntry(path, name, isDir); }
+                        finally { busyOff(); }
+                    }
+                case 'copy':
+                    M.clipboard = { src: path, cut: false };
+                    $('btn-paste').disabled = false;
+                    return UI.toast(`"${name}" copied — open a destination folder and paste`);
+                case 'cut':
+                    M.clipboard = { src: path, cut: true };
+                    $('btn-paste').disabled = false;
+                    return UI.toast(`"${name}" ready to move — open a destination folder and paste`);
+                case 'rename':
+                    {
+                        const newName = prompt(`Rename "${name}" to:`, name)?.trim();
+                        if (!newName || newName === name) return;
+                        if (!isValidName(newName)) throw new Error('Invalid name');
+                        await mountOp({ type: 'fs-rename', path, newName });
+                        return refreshListing();
+                    }
+                case 'delete':
+                    {
+                        if (!confirm(`Delete "${name}"${isDir ? ' and everything inside it' : ''}?`)) return;
+                        await mountOp({ type: 'fs-delete', path });
+                        if (M.clipboard?.src === path) M.clipboard = null;
+                        return refreshListing();
+                    }
+            }
+        }
+
+        async function pasteClipboard()
+        {
+            const M = state.mount;
+            if (!M.clipboard) return;
+            const { src, cut } = M.clipboard;
+            await mountOp(cut ? { type: 'fs-move', src, destDir: M.cwd } : { type: 'fs-copy', src, destDir: M.cwd });
+            if (cut) M.clipboard = null;
+            await refreshListing();
+        }
+
+        async function moveEntry(src, destDir)
+        {
+            if (!src || destDir === src || parentOf(src) === destDir) return;
+            await mountOp({ type: 'fs-move', src, destDir });
+            await refreshListing();
+        }
+
+        async function uploadOne(file, path, onSent)
+        {
+            const ready = uploadWaitOk();
+            sendJSON({ type: 'fs-write-start', path, size: file.size });
+            await ready;
+            const done = uploadWaitOk();
+            done.catch(() => { });
+            if (file.size > 0) await streamOut(file, file.size, s => onSent?.(s));
+            sendJSON({ type: 'fs-write-end' });
+            await done;
+        }
+
+        let uploadSeq = 0;
+
+        function updateUploadUI(current, total, text)
+        {
+            $('upload-status-text').innerText = text;
+            $('upload-status-size').innerText = `${formatBytes(current)} / ${formatBytes(total)}`;
+            const pct = total === 0 ? 100 : Math.min((current / total) * 100, 100);
+            $('upload-status-pct').innerText = `${pct.toFixed(2)}%`;
+            $('upload-status-bar').style.width = `${pct}%`;
+        }
+
+        function queueUploads(items)
+        {
+            const M = state.mount;
+            if (!M || !items.length) return;
+            const seq = ++uploadSeq;
+            const destCwd = M.cwd;
+            const run = M.uploadLock.then(async () =>
+            {
+                const total = items.reduce((sum, it) => sum + it.file.size, 0);
+                let sent = 0;
+                $('upload-status').classList.remove('hidden');
+                $('upload-status-bar').classList.remove('success', 'failed');
+                $('upload-status-bar').style.width = '0%';
+                try
+                {
+                    for (let i = 0; i < items.length; i++)
+                    {
+                        const item = items[i];
+                        const label = `Uploading "${item.rel}" (${i + 1}/${items.length})`;
+                        await uploadOne(item.file, joinPath(destCwd, item.rel), fileSent => updateUploadUI(sent + fileSent, total, label));
+                        sent += item.file.size;
+                        updateUploadUI(sent, total, label);
+                    }
+                    $('upload-status-bar').classList.add('success');
+                    $('upload-status-text').innerText = 'Upload complete';
+                    sendJSON({ type: 'fs-list', path: destCwd });
+                } catch (err)
+                {
+                    $('upload-status-text').innerText = 'Upload failed';
+                    $('upload-status-bar').classList.add('failed');
+                    throw err;
+                } finally
+                {
+                    setTimeout(() =>
+                    {
+                        if (uploadSeq === seq) $('upload-status').classList.add('hidden');
+                    }, 2000);
+                }
+            }).catch(err => { if (state.mount) UI.toast(err?.message || 'Upload failed'); });
+            M.uploadLock = run;
+        }
+
+        /* --- File manager events --- */
+
+        $('btn-mount').onclick = startMountServer;
+
+        const mountManager = $('mount-manager');
+        const mountTbody = $('mount-tbody');
+        const DRAG_TYPE = 'application/x-jfshare-path';
+        const hasDragFiles = e => [...(e.dataTransfer?.types || [])].includes('Files');
+        const hasDragPath = e => [...(e.dataTransfer?.types || [])].includes(DRAG_TYPE);
+
+        mountTbody.addEventListener('click', e =>
+        {
+            const btn = e.target.closest('.row-btn');
+            if (!btn) return;
+            const tr = btn.closest('tr');
+            if (!tr) return;
+            mountTask(() => rowAction(btn.dataset.action, tr.dataset.path, tr.dataset.dir === '1'));
+        });
+
+        mountTbody.addEventListener('dblclick', e =>
+        {
+            const tr = e.target.closest('tr');
+            if (!tr) return;
+            if (tr.dataset.dir === '1') mountTask(() => navigateTo(tr.dataset.path));
+            else mountTask(() => previewFile(tr.dataset.path, baseName(tr.dataset.path)));
+        });
+
+        mountTbody.addEventListener('dragstart', e =>
+        {
+            const tr = e.target.closest('tr');
+            if (!tr) return;
+            e.dataTransfer.setData(DRAG_TYPE, tr.dataset.path);
+            e.dataTransfer.effectAllowed = 'move';
+        });
+
+        mountTbody.addEventListener('dragover', e =>
+        {
+            if (!hasDragPath(e)) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            mountTbody.querySelectorAll('.drop-target').forEach(el => el.classList.remove('drop-target'));
+            const tr = e.target.closest('tr');
+            if (tr && tr.dataset.dir === '1') tr.classList.add('drop-target');
+        });
+
+        mountTbody.addEventListener('drop', e =>
+        {
+            const src = e.dataTransfer.getData(DRAG_TYPE);
+            if (!src) return;
+            e.preventDefault();
+            e.stopPropagation();
+            mountTbody.querySelectorAll('.drop-target').forEach(el => el.classList.remove('drop-target'));
+            const tr = e.target.closest('tr');
+            const dest = tr && tr.dataset.dir === '1' ? tr.dataset.path : state.mount.cwd;
+            mountTask(() => moveEntry(src, dest));
+        });
+
+        $('mount-crumbs').addEventListener('click', e =>
+        {
+            const crumb = e.target.closest('.crumb');
+            if (!crumb || crumb.classList.contains('current')) return;
+            mountTask(() => navigateTo(crumb.dataset.path));
+        });
+
+        $('mount-crumbs').addEventListener('dragover', e =>
+        {
+            if (!hasDragPath(e)) return;
+            const crumb = e.target.closest('.crumb');
+            if (!crumb || crumb.classList.contains('current')) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            $('mount-crumbs').querySelectorAll('.drop-target').forEach(el => el.classList.remove('drop-target'));
+            crumb.classList.add('drop-target');
+        });
+
+        $('mount-crumbs').addEventListener('drop', e =>
+        {
+            const src = e.dataTransfer.getData(DRAG_TYPE);
+            if (!src) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const crumb = e.target.closest('.crumb');
+            if (!crumb || crumb.classList.contains('current')) return;
+            mountTask(() => moveEntry(src, crumb.dataset.path));
+        });
+
+        window.addEventListener('dragend', () =>
+        {
+            document.querySelectorAll('.drop-target').forEach(el => el.classList.remove('drop-target'));
+        });
+
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(ev => mountManager.addEventListener(ev, e => e.preventDefault()));
+
+        mountManager.addEventListener('dragover', e =>
+        {
+            if (hasDragFiles(e)) mountManager.classList.add('drag-highlight');
+        });
+
+        mountManager.addEventListener('dragleave', e =>
+        {
+            if (!mountManager.contains(e.relatedTarget)) mountManager.classList.remove('drag-highlight');
+        });
+
+        mountManager.addEventListener('drop', async e =>
+        {
+            mountManager.classList.remove('drag-highlight');
+            if (!hasDragFiles(e)) return;
+            const files = [];
+            if (e.dataTransfer.items)
+            {
+                const entries = [];
+                for (let i = 0; i < e.dataTransfer.items.length; i++)
+                {
+                    if (e.dataTransfer.items[i].kind === 'file')
+                    {
+                        const entry = e.dataTransfer.items[i].webkitGetAsEntry();
+                        if (entry) entries.push(entry);
+                    }
+                }
+                for (const entry of entries) files.push(...await readEntry(entry));
+            } else
+            {
+                for (const f of e.dataTransfer.files) files.push({ file: f, path: f.name });
+            }
+            queueUploads(files.map(f => ({ file: f.file, rel: f.path })));
+        });
+
+        $('btn-new-folder').onclick = () => mountTask(async () =>
+        {
+            const name = prompt('New folder name:')?.trim();
+            if (!name) return;
+            if (!isValidName(name)) throw new Error('Invalid folder name');
+            await mountOp({ type: 'fs-mkdir', path: joinPath(state.mount.cwd, name) });
+            await refreshListing();
+        });
+
+        $('btn-upload').onclick = () => $('upload-input').click();
+
+        $('upload-input').addEventListener('change', e =>
+        {
+            queueUploads([...e.target.files].map(f => ({ file: f, rel: f.webkitRelativePath || f.name })));
+            e.target.value = '';
+        });
+
+        $('btn-paste').onclick = () => mountTask(pasteClipboard);
+
+        $('btn-refresh').onclick = () => mountTask(refreshListing);
+
+        $('preview-close').onclick = closePreview;
 
         $('btn-accept').onclick = async () =>
         {
@@ -1053,6 +2692,7 @@
         window.addEventListener('DOMContentLoaded', () =>
         {
             if (!state.hasFSAPI) $('api-warning').classList.remove('hidden');
+            else $('btn-mount').classList.remove('hidden');
 
             const params = new URLSearchParams(window.location.search);
             const hash = window.location.hash.substring(1);
@@ -1075,6 +2715,11 @@
                 }
                 window.history.replaceState({}, document.title, window.location.pathname);
             }
+        });
+
+        window.addEventListener('hashchange', () =>
+        {
+            if (window.location.hash.substring(1)) window.location.reload();
         });
     </script>
 </body>
