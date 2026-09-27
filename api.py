@@ -6,6 +6,7 @@ from fastapi.staticfiles import StaticFiles
 import random
 from pydantic import BaseModel
 import time
+from cf import get_turn_credentials
 
 
 app = FastAPI()
@@ -42,7 +43,7 @@ def create_offer():
     code = generate_code()
     while code in sessions:
         code = generate_code()
-    sessions[code] = {"offer": None, "answer": None, "created": time.time()}
+    sessions[code] = {"offer": None, "answer": None, "created": time.time(), "servers": None}
     return {"code": code}
 
 
@@ -62,6 +63,15 @@ def get_offer(code: str):
     if code not in sessions:
         raise HTTPException(status_code=404, detail="Not found")
     return sessions[code]
+
+
+@app.get("/turn/{code}")
+def get_turn(code: str):
+    session = sessions.get(code)
+    if session.get('servers'): return session
+    session['servers'] = get_turn_credentials()
+    print(f'Requesting TURN server - received {session["servers"]}')
+    return session
 
 
 app.mount("/", StaticFiles(directory=".", html=True), name="static")
