@@ -843,7 +843,7 @@
 
     <script>
         const CONFIG = {
-            API_URL: 'https://jfshare.vercel.app',
+            API_URL: 'https://roulette-watching-compounds-blogs.trycloudflare.com',
             CHUNK_SIZE: 64 * 1024,
             BUFFER_THRESHOLD: 64 * 1024 * 16,
             ICE_SERVERS: [
@@ -861,13 +861,21 @@
                         "stun:stun4.l.google.com:5349"
                     ]
                 }
-            ]
+            ],
+            SIGNALING_POLL_MS: 1000,
+            EXCHANGE_TIMEOUT_MS: 5000,
+            CONNECT_TIMEOUT_MS: 3000,
+            TURN_CONNECT_TIMEOUT_MS: 5000,
+            ICE_GATHER_MS: 2000,
+            ICE_GATHER_TURN_MS: 2000
         };
+
+        const log = (...args) => console.log('[webrtc]', ...args);
 
         const state = {
             hasFSAPI: ('showDirectoryPicker' in window),
             isHost: false,
-            pc: new RTCPeerConnection({ iceServers: CONFIG.ICE_SERVERS }),
+            pc: null,
             dataChannel: null,
             batchQueue: [], isSending: false, currentBatch: null, currentFile: null,
             incomingBatch: null, incomingExpectedSize: 0, incomingReceivedSize: 0,
@@ -875,7 +883,9 @@
             baseDirHandle: null, singleFileHandle: null,
             messageQueue: [], isProcessingMessage: false,
             zipEntries: null,
-            mount: null
+            mount: null,
+            apiCode: null,
+            negotiation: null
         };
 
         const sanitizeFilename = (name) => name.replace(/[\\/:*?"<>|]/g, '_');
@@ -903,11 +913,31 @@
             return await new Response(stream).text();
         }
 
-        const gatherIce = (pc, timeout = 1500) => new Promise(resolve =>
+        const gatherIce = (pc, timeout = 1500, force = false) => new Promise(resolve =>
         {
-            if (pc.iceGatheringState === 'complete') return resolve();
-            const timer = setTimeout(resolve, timeout);
-            pc.onicecandidate = e => { if (!e.candidate) { clearTimeout(timer); resolve(); } };
+            if (!force && pc.iceGatheringState === 'complete')
+            {
+                log('ICE gathering already complete');
+                return resolve();
+            }
+            let count = 0, done = false;
+            const types = {};
+            const finish = reason =>
+            {
+                if (done) return;
+                done = true;
+                clearTimeout(timer);
+                const summary = Object.entries(types).map(([t, n]) => `${t}:${n}`).join(' ') || 'none';
+                log(`ICE gathering ${reason} — ${count} candidate(s) [${summary}]`);
+                resolve();
+            };
+            const timer = setTimeout(() => finish(`timed out after ${timeout}ms`), timeout);
+            pc.onicecandidate = e =>
+            {
+                if (!e.candidate) return finish('complete');
+                count++;
+                types[e.candidate.type || 'unknown'] = (types[e.candidate.type || 'unknown'] || 0) + 1;
+            };
         });
 
         const downloadBlob = (chunks, name) =>
@@ -1002,24 +1032,330 @@
             async patchOffer(code, data)
             {
                 await fetch(`${CONFIG.API_URL}/offer/${code}`, {
-                    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
+                    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data), signal: AbortSignal.timeout(5000)
                 });
             },
             async getAnswer(code)
             {
-                const res = await fetch(`${CONFIG.API_URL}/offer/${code}`);
-                return await res.json();
+                const res = await fetch(`${CONFIG.API_URL}/offer/${code}`, { signal: AbortSignal.timeout(5000) });
+                return res.ok ? await res.json() : null;
+            },
+            async getTurn(code)
+            {
+                const res = await fetch(`${CONFIG.API_URL}/turn/${code}`, { signal: AbortSignal.timeout(5000) });
+                if (!res.ok)
+                {
+                    console.warn('[webrtc] GET /turn failed:', res.status);
+                    return null;
+                }
+                const data = await res.json();
+                const servers = data?.servers;
+                return Array.isArray(servers) ? servers : servers?.iceServers ?? null;
             }
         };
 
+        /* ---------------- Connection negotiation: 4-stage fallback state machine ----------------
+        * 1. Direct P2P, host initiates (no TURN)     2. Direct P2P, client initiates (no TURN)
+        * 3. Relayed P2P, host initiates (TURN)       4. Relayed P2P, client initiates (TURN)
+        * Each stage tears down and re-creates the RTCPeerConnection; SDP payloads are published
+        * as stage-tagged envelopes so both peers transition in lockstep and ignore stale ones. */
+
+        const STAGES = [
+            { stage: 1, initiator: 'host', turn: false },
+            { stage: 2, initiator: 'client', turn: false },
+            { stage: 3, initiator: 'host', turn: true },
+            { stage: 4, initiator: 'client', turn: true }
+        ];
+        const STAGE_BY_ID = Object.fromEntries(STAGES.map(s => [s.stage, s]));
+
+        const STAGE_MSGS = {
+            2: 'Direct connection failed — retrying with reversed roles…',
+            3: 'Still no connection — retrying through TURN relay…',
+            4: 'Relayed attempt failed — retrying via TURN with client as initiator…'
+        };
+
+        const stageLabel = (s) => `stage ${s.stage} [${s.initiator === 'host' ? 'host offers' : 'client offers'}, ${s.turn ? 'TURN' : 'direct'}]`;
+        const myRole = () => state.isHost ? 'host' : 'client';
+        const stageConnectTimeout = (s) => s.turn ? CONFIG.TURN_CONNECT_TIMEOUT_MS : CONFIG.CONNECT_TIMEOUT_MS;
+        const stageExchangeTimeout = (s) => s.stage === 1 ? Infinity : CONFIG.EXCHANGE_TIMEOUT_MS;
+        const MANUAL_STAGE = { stage: 0, initiator: 'host', turn: false };
+
+        const isPeerFullyConnected = () =>
+        {
+            const pc = state.pc;
+            if (!pc) return false;
+            return pc.connectionState === 'connected' ||
+                pc.iceConnectionState === 'connected' ||
+                pc.iceConnectionState === 'completed';
+        };
+
+        function teardownPeerConnection()
+        {
+            const pc = state.pc;
+            if (!pc) return;
+            const dc = state.dataChannel;
+            if (dc)
+            {
+                try { dc.onopen = dc.onclose = dc.onmessage = dc.onbufferedamountlow = null; } catch (err) { }
+            }
+            try
+            {
+                pc.onconnectionstatechange = pc.oniceconnectionstatechange =
+                    pc.onicecandidateerror = pc.ondatachannel = pc.onicecandidate = null;
+            } catch (err) { }
+            try { if (pc.connectionState !== 'closed') pc.close(); } catch (err) { }
+            state.pc = null;
+            state.dataChannel = null;
+            log('peer connection torn down');
+        }
+
+        function createPeerConnection({ iceServers = CONFIG.ICE_SERVERS, initiator = false } = {})
+        {
+            teardownPeerConnection();
+            const pc = new RTCPeerConnection({ iceServers });
+            state.pc = pc;
+            pc.onconnectionstatechange = () =>
+            {
+                if (pc !== state.pc) return;
+                log(`pc connectionState: ${pc.connectionState}`);
+                if (pc.connectionState === 'connected') markConnected();
+            };
+            pc.oniceconnectionstatechange = () =>
+            {
+                if (pc !== state.pc) return;
+                log(`pc iceConnectionState: ${pc.iceConnectionState}`);
+                if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') markConnected();
+            };
+            pc.onicecandidateerror = e => console.warn('[webrtc] ICE candidate error:', e.errorCode, e.errorText || '', e.url || '');
+            pc.ondatachannel = (e) =>
+            {
+                if (pc !== state.pc) return;
+                log(`data channel received from peer (${e.channel.label})`);
+                state.dataChannel = e.channel;
+                setupDataChannel();
+            };
+            if (initiator)
+            {
+                state.dataChannel = pc.createDataChannel('fileStream', { ordered: true });
+                setupDataChannel();
+            }
+            log(`peer connection created (ice servers: ${iceServers?.length ? `${iceServers.length} entr${iceServers.length === 1 ? 'y' : 'ies'}` : 'none'})`);
+            return pc;
+        }
+
+        function clearNegotiationTimers()
+        {
+            const n = state.negotiation;
+            if (!n) return;
+            if (n.stageTimer) { clearTimeout(n.stageTimer); n.stageTimer = null; }
+            if (n.pollTimer) { clearTimeout(n.pollTimer); n.pollTimer = null; }
+        }
+
+        function markConnected()
+        {
+            const n = state.negotiation;
+            if (!n || n.connected) return;
+            n.connected = true;
+            clearNegotiationTimers();
+            const s = STAGES[n.stageIndex];
+            log(`connection established via ${s ? stageLabel(s) : 'unknown stage'}`);
+            try { n.resolveConnected?.(true); } catch (err) { }
+        }
+
+        function awaitConnection(timeoutMs)
+        {
+            const n = state.negotiation;
+            if (n.connected) return Promise.resolve(true);
+            if (isPeerFullyConnected()) { markConnected(); return Promise.resolve(true); }
+            return Promise.race([
+                n.connectedPromise.then(() => true),
+                new Promise(resolve =>
+                {
+                    n.stageTimer = setTimeout(() =>
+                    {
+                        n.stageTimer = null;
+                        if (isPeerFullyConnected()) { markConnected(); resolve(true); }
+                        else resolve(false);
+                    }, timeoutMs);
+                })
+            ]);
+        }
+
+        async function ensureTurnCredentials(code)
+        {
+            const n = state.negotiation;
+            if (n.turnCreds?.length) return n.turnCreds;
+            let creds = null;
+            try { creds = await SignalingAPI.getTurn(code); } catch (err) { console.warn('[webrtc] TURN credential fetch failed:', err); }
+            if (creds?.length)
+            {
+                n.turnCreds = creds;
+                log(`TURN credentials ready (${creds.length} server entries)`);
+            }
+            else log('no TURN credentials available — using default ICE servers');
+            return creds;
+        }
+
+        const makeEnvelope = (stageDef, descData) =>
+            JSON.stringify({ v: 1, stage: stageDef.stage, initiator: stageDef.initiator, desc: descData });
+
+        async function createLocalOffer(stageDef)
+        {
+            const offer = await state.pc.createOffer();
+            await state.pc.setLocalDescription(offer);
+            await gatherIce(state.pc, stageDef.turn ? CONFIG.ICE_GATHER_TURN_MS : CONFIG.ICE_GATHER_MS, stageDef.turn);
+            const ufrag = state.pc.localDescription.sdp.match(/a=ice-ufrag:(\S+)/)?.[1];
+            log(`${myRole()}: offer ready (ufrag: ${ufrag})`);
+            return await compress(JSON.stringify(state.pc.localDescription));
+        }
+
+        async function createLocalAnswer(stageDef)
+        {
+            const answer = await state.pc.createAnswer();
+            await state.pc.setLocalDescription(answer);
+            await gatherIce(state.pc, stageDef.turn ? CONFIG.ICE_GATHER_TURN_MS : CONFIG.ICE_GATHER_MS, stageDef.turn);
+            const ufrag = state.pc.localDescription.sdp.match(/a=ice-ufrag:(\S+)/)?.[1];
+            log(`${myRole()}: answer ready (ufrag: ${ufrag})`);
+            return await compress(JSON.stringify(state.pc.localDescription));
+        }
+
+        function pollForEnvelope(code, slot, stageDef, maxMs, allowLaterStages = false)
+        {
+            return new Promise(resolve =>
+            {
+                const deadline = maxMs === Infinity ? Infinity : Date.now() + maxMs;
+                const tick = async () =>
+                {
+                    try
+                    {
+                        const data = await SignalingAPI.getAnswer(code);
+                        const raw = data?.[slot];
+                        if (raw)
+                        {
+                            let env = null;
+                            try { env = JSON.parse(raw); } catch (err) { }
+                            if (env?.v === 1 && typeof env.desc === 'string' &&
+                                STAGE_BY_ID[env.stage] && env.initiator === STAGE_BY_ID[env.stage].initiator)
+                            {
+                                const stageOk = env.stage === stageDef.stage || (allowLaterStages && env.stage > stageDef.stage);
+                                if (stageOk) return resolve(env);
+                            }
+                        }
+                    } catch (err) { console.warn('[webrtc] signaling poll error:', err); }
+                    if (Date.now() >= deadline) { log(`${myRole()}: ${slot} polling window expired`); return resolve(null); }
+                    state.negotiation.pollTimer = setTimeout(tick, CONFIG.SIGNALING_POLL_MS);
+                };
+                tick();
+            });
+        }
+
+        async function attemptStage(stageDef)
+        {
+            const n = state.negotiation;
+            const code = state.apiCode;
+            const isInitiator = stageDef.initiator === myRole();
+            n.stageIndex = STAGES.indexOf(stageDef);
+            log(`${myRole()}: attempting ${stageLabel(stageDef)} (${isInitiator ? 'initiator' : 'answerer'})`);
+            if (!state.isHost)
+                document.querySelector('#view-client p.subtitle').innerText =
+                    stageDef.stage === 1 ? 'Connecting…' : `Retrying connection (attempt ${stageDef.stage}/4)…`;
+
+            let appliedStage = stageDef;
+            try
+            {
+                if (isInitiator)
+                {
+                    const creds = stageDef.turn ? await ensureTurnCredentials(code) : null;
+                    if (n.connected) return true;
+                    createPeerConnection({ iceServers: creds?.length ? creds : CONFIG.ICE_SERVERS, initiator: true });
+                    const offerData = await createLocalOffer(stageDef);
+                    await SignalingAPI.patchOffer(code, { offer: makeEnvelope(stageDef, offerData) });
+                    log(`${myRole()}: ${stageLabel(stageDef)} offer published — waiting for answer`);
+                    const env = await pollForEnvelope(code, 'answer', stageDef, stageExchangeTimeout(stageDef));
+                    if (!env) return false;
+                    if (n.connected) return true;
+                    const desc = JSON.parse(await decompress(env.desc));
+                    log(`${myRole()}: ${stageLabel(stageDef)} answer received (ufrag: ${desc.sdp?.match(/a=ice-ufrag:(\S+)/)?.[1] ?? '?'})`);
+                    await state.pc.setRemoteDescription(desc);
+                }
+                else
+                {
+                    log(`${myRole()}: ${stageLabel(stageDef)} waiting for offer`);
+                    const env = await pollForEnvelope(code, 'offer', stageDef, stageExchangeTimeout(stageDef), true);
+                    if (!env) return false;
+                    if (n.connected) return true;
+                    appliedStage = STAGE_BY_ID[env.stage];
+                    if (appliedStage.stage !== stageDef.stage) log(`${myRole()}: fast-forward ${stageDef.stage} → ${stageLabel(appliedStage)}`);
+                    n.stageIndex = STAGES.indexOf(appliedStage);
+                    const creds = appliedStage.turn ? await ensureTurnCredentials(code) : null;
+                    if (n.connected) return true;
+                    createPeerConnection({ iceServers: creds?.length ? creds : CONFIG.ICE_SERVERS, initiator: false });
+                    const desc = JSON.parse(await decompress(env.desc));
+                    log(`${myRole()}: ${stageLabel(appliedStage)} offer received (ufrag: ${desc.sdp?.match(/a=ice-ufrag:(\S+)/)?.[1] ?? '?'})`);
+                    await state.pc.setRemoteDescription(desc);
+                    const answerData = await createLocalAnswer(appliedStage);
+                    await SignalingAPI.patchOffer(code, { answer: makeEnvelope(appliedStage, answerData) });
+                    log(`${myRole()}: ${stageLabel(appliedStage)} answer published`);
+                    if (appliedStage.stage === 1 && !state.isHost)
+                        document.querySelector('#view-client p.subtitle').innerText = 'Answer sent! Waiting for host...';
+                }
+            } catch (err)
+            {
+                console.warn(`[webrtc] ${stageLabel(appliedStage)} attempt failed:`, err);
+                return false;
+            }
+            return await awaitConnection(stageConnectTimeout(appliedStage));
+        }
+
+        async function runNegotiation()
+        {
+            const n = state.negotiation = {
+                active: true, stageIndex: -1, connected: false,
+                stageTimer: null, pollTimer: null, turnCreds: null
+            };
+            n.connectedPromise = new Promise(resolve => { n.resolveConnected = resolve; });
+            log(`${myRole()}: starting connection negotiation (4-stage fallback)`);
+            try
+            {
+                let i = 0;
+                while (i < STAGES.length && !n.connected)
+                {
+                    const ok = await attemptStage(STAGES[i]);
+                    if (n.connected || ok) break;
+                    const nextIndex = Math.max(n.stageIndex + 1, i + 1);
+                    const next = STAGES[nextIndex];
+                    if (!next) break;
+                    if (nextIndex > i) log(STAGE_MSGS[next.stage] ?? `Connection attempt failed — trying stage ${next.stage}…`);
+                    i = nextIndex;
+                }
+            } catch (err)
+            {
+                console.warn('[webrtc] negotiation error:', err);
+            }
+            n.active = false;
+            clearNegotiationTimers();
+            if (!n.connected) giveUp();
+        }
+
+        function giveUp()
+        {
+            teardownPeerConnection();
+            log('negotiation: all 4 stages failed — giving up');
+            UI.toast('Connection failed');
+            if (!state.isHost)
+            {
+                $('client-loading').classList.add('hidden');
+                document.querySelector('#view-client p.subtitle').innerText = 'Connection failed — reload to retry.';
+            }
+        }
+
         async function initHost()
         {
-            state.dataChannel = state.pc.createDataChannel('fileStream', { ordered: true });
-            setupDataChannel();
-
             try
             {
                 if (CONFIG.API_URL == '') throw new Error("API Offline");
+                log('host: initializing (API mode)');
                 const apiRes = await SignalingAPI.postOffer();
                 if (!apiRes) throw new Error("API Offline");
 
@@ -1035,32 +1371,15 @@
                 });
                 document.getElementById('qr-code-container').classList.remove('hidden');
 
-                const offer = await state.pc.createOffer();
-                await state.pc.setLocalDescription(offer);
-                await gatherIce(state.pc, 2000);
-
-                await SignalingAPI.patchOffer(apiRes.code, { offer: await compress(JSON.stringify(state.pc.localDescription)) });
-
-                const poll = async () =>
-                {
-                    const { answer } = await SignalingAPI.getAnswer(apiRes.code);
-                    if (answer && state.pc.signalingState !== 'stable')
-                    {
-                        await state.pc.setRemoteDescription(JSON.parse(await decompress(answer)));
-                    } else if (!answer)
-                    {
-                        setTimeout(poll, 2000);
-                    }
-                };
-                poll();
+                state.apiCode = apiRes.code;
+                runNegotiation();
             } catch (err)
             {
+                log('host: API offline — switching to manual fallback mode');
                 $('manual-fallback').classList.remove('hidden');
-                const offer = await state.pc.createOffer();
-                await state.pc.setLocalDescription(offer);
-                await gatherIce(state.pc);
-
-                const link = `${window.location.origin}${window.location.pathname}?offer=${encodeURIComponent(await compress(JSON.stringify(state.pc.localDescription)))}`;
+                if (!state.pc) createPeerConnection({ initiator: true });
+                const offerData = await createLocalOffer(MANUAL_STAGE);
+                const link = `${window.location.origin}${window.location.pathname}?offer=${encodeURIComponent(offerData)}`;
                 setupCopyInput('share-url', link, "Link copied!");
             }
 
@@ -1068,7 +1387,7 @@
             {
                 try
                 {
-                    if (e.target.value.trim() && state.pc.signalingState !== 'stable')
+                    if (e.target.value.trim() && state.pc && state.pc.signalingState !== 'stable')
                     {
                         await state.pc.setRemoteDescription(JSON.parse(await decompress(e.target.value.trim())));
                     }
@@ -1078,30 +1397,37 @@
 
         async function initClient(encodedOffer, apiCode = null)
         {
-            state.pc.ondatachannel = (e) => { state.dataChannel = e.channel; setupDataChannel(); };
+            if (apiCode)
+            {
+                try
+                {
+                    const probe = await SignalingAPI.getAnswer(apiCode);
+                    if (probe === null) throw new Error('Invalid code');
+                } catch (err)
+                {
+                    alert("Failed to connect. Link may be invalid.");
+                    window.location.href = window.location.pathname;
+                    return;
+                }
+                state.apiCode = apiCode;
+                $('client-loading').classList.remove('hidden');
+                document.querySelector('#view-client p.subtitle').innerText = 'Connecting…';
+                log('client: initializing (API mode)');
+                runNegotiation();
+                return;
+            }
 
             try
             {
-                const offerData = encodedOffer || (await SignalingAPI.getAnswer(apiCode)).offer;
-                if (!offerData) throw new Error("Invalid offer");
-
-                await state.pc.setRemoteDescription(JSON.parse(await decompress(offerData)));
-                await state.pc.setLocalDescription(await state.pc.createAnswer());
-                await gatherIce(state.pc);
-
-                const answerData = await compress(JSON.stringify(state.pc.localDescription));
-
-                if (apiCode)
-                {
-                    await SignalingAPI.patchOffer(apiCode, { answer: answerData });
-                    $('client-loading').classList.remove('hidden');
-                    document.querySelector('#view-client p.subtitle').innerText = "Answer sent! Waiting for host...";
-                } else
-                {
-                    $('client-loading').classList.add('hidden');
-                    $('client-ready').classList.remove('hidden');
-                    setupCopyInput('client-answer-output', answerData, "Response code copied!");
-                }
+                log('client: initializing (manual mode)');
+                if (!encodedOffer) throw new Error('Invalid offer');
+                const offer = JSON.parse(await decompress(encodedOffer));
+                createPeerConnection({ initiator: false });
+                await state.pc.setRemoteDescription(offer);
+                const answerData = await createLocalAnswer(MANUAL_STAGE);
+                $('client-loading').classList.add('hidden');
+                $('client-ready').classList.remove('hidden');
+                setupCopyInput('client-answer-output', answerData, "Response code copied!");
             } catch (err)
             {
                 alert("Failed to connect. Link may be invalid.");
@@ -1119,8 +1445,9 @@
         function setupDataChannel()
         {
             state.dataChannel.binaryType = 'arraybuffer';
-            state.dataChannel.onopen = () => UI.showView('view-transfer');
-            state.dataChannel.onclose = () => { alert("Connection lost."); window.location.reload(); };
+            state.dataChannel.onopen = () => { log('data channel open'); markConnected(); UI.showView('view-transfer'); };
+            if (state.dataChannel.readyState === 'open') state.dataChannel.onopen();
+            state.dataChannel.onclose = () => { log('data channel closed'); alert("Connection lost."); window.location.reload(); };
             state.dataChannel.onmessage = (e) =>
             {
                 state.messageQueue.push(e.data);
