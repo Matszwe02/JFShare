@@ -774,6 +774,7 @@
             <p id="incoming-prompt"></p>
             <div class="modal-buttons">
                 <button class="btn btn-primary" id="btn-accept">Accept</button>
+                <button class="btn btn-secondary ${state.incomingBatch?.isSingleFile ? 'hidden' : ''}" id="btn-accept-zip">Accept - ZIP</button>
                 <button class="btn btn-secondary" id="btn-reject">Reject</button>
             </div>
         </div>
@@ -1016,9 +1017,10 @@
             {
                 $('incoming-filename').innerText = batch.name;
                 $('incoming-filesize').innerText = `${formatBytes(batch.totalSize)} ${batch.fileCount > 1 ? `(${batch.fileCount} items)` : ''}`;
-                $('incoming-prompt').innerHTML = state.hasFSAPI
-                    ? `Select a <strong>${batch.isSingleFile ? 'save location' : 'save folder'}</strong>.`
-                    : (batch.isSingleFile ? `<strong>Accept download</strong> (In-Memory mode)` : `<strong>Accept download</strong> (saved as a ZIP file)`);
+                $('incoming-prompt').innerHTML = state.hasFSAPI && !batch.isSingleFile
+                    ? `Select a <strong>save folder</strong>.`
+                    : (batch.isSingleFile ? `<strong>Accept download</strong> (In-Memory mode)` : `<strong>Accept download</strong> (saved as a ZIP file). Or choose below.`);
+                $('btn-accept-zip').classList.toggle('hidden', batch.isSingleFile);
                 $('accept-overlay').classList.remove('hidden');
             }
         };
@@ -1492,8 +1494,9 @@
 
                     const isSingle = state.incomingBatch ? state.incomingBatch.isSingleFile : isSingleFile;
 
-                    if (state.hasFSAPI)
-                    {
+                    if (state.zipEntries) {
+                        size === 0 ? handleEmptyFile() : sendJSON({ type: 'file-ready' });
+                    } else if (state.hasFSAPI) {
                         try
                         {
                             let handle = isSingle ? state.singleFileHandle : state.baseDirHandle;
@@ -1700,6 +1703,7 @@
             folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>',
             file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>',
             download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>',
+            downloadZip: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-file-zip" viewBox="0 0 16 16"> <path d="M6.5 7.5a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v.938l.4 1.599a1 1 0 0 1-.416 1.074l-.93.62a1 1 0 0 1-1.109 0l-.93-.62a1 1 0 0 1-.415-1.074l.4-1.599zm2 0h-1v.938a1 1 0 0 1-.03.243l-.4 1.598.93.62.93-.62-.4-1.598a1 1 0 0 1-.03-.243z"/> <path d="M2 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2zm5.5-1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H9v1H8v1h1v1H8v1h1v1H7.5V5h-1V4h1V3h-1V2h1z"/> </svg>',
             copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>',
             move: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 9 2 12 5 15"></polyline><polyline points="9 5 12 2 15 5"></polyline><polyline points="15 19 12 22 9 19"></polyline><polyline points="19 9 22 12 19 15"></polyline><line x1="2" y1="12" x2="22" y2="12"></line><line x1="12" y1="2" x2="12" y2="22"></line></svg>',
             rename: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"></path></svg>',
@@ -2346,6 +2350,7 @@
 <td class="cell-size">${e.isDir ? '&mdash;' : formatBytes(e.size)}</td>
 <td class="cell-date">${e.isDir || !e.lastModified ? '&mdash;' : new Date(e.lastModified).toLocaleString()}</td>
 <td class="cell-actions">
+${e.isDir ? `<button class="row-btn" data-action="download-zip" title="Download as .zip">${ICONS.downloadZip}</button>` : ''}
 <button class="row-btn" data-action="download" title="Download">${ICONS.download}</button>
 <button class="row-btn" data-action="copy" title="Copy">${ICONS.copy}</button>
 <button class="row-btn" data-action="cut" title="Move">${ICONS.move}</button>
@@ -2358,9 +2363,9 @@
             $('btn-paste').disabled = !M.clipboard;
         }
 
-        async function downloadEntry(path, name, isDir)
+        async function downloadEntry(path, name, isDir, useFSAPI = true)
         {
-            if (isDir) return window.showDirectoryPicker ? downloadDirectoryFS(path, name) : downloadZip(path, name);
+            if (isDir) return (useFSAPI && window.showDirectoryPicker) ? downloadDirectoryFS(path, name) : downloadZip(path, name);
             if (window.showSaveFilePicker) return downloadFileFS(path, name);
             const chunks = await readRemoteFile(path);
             downloadBlob(chunks, name);
@@ -2626,7 +2631,14 @@
                 case 'download':
                     {
                         const update = showBusy(`Downloading "${name}"…`);
-                        try { return await downloadEntry(path, name, isDir); }
+                        try { return await downloadEntry(path, name, isDir, true); }
+                        finally { busyOff(); }
+                    }
+                case 'download-zip':
+                    {
+                        if (!isDir) { UI.toast('Can only download folders as .zip'); return; }
+                        const update = showBusy(`Downloading "${name}"…`);
+                        try { return await downloadZip(path, name); }
                         finally { busyOff(); }
                     }
                 case 'copy':
@@ -2916,6 +2928,15 @@
             UI.createTransferItem(state.incomingBatch.id, state.incomingBatch.name, 'in', state.incomingBatch.totalSize);
             UI.setTransferStatus(state.incomingBatch.id, "Rejected", true);
             sendJSON({ type: 'error', id: state.incomingBatch.id, message: 'Rejected by receiver.' });
+        };
+
+        $('btn-accept-zip').onclick = async () =>
+        {
+            $('accept-overlay').classList.add('hidden');
+            UI.createTransferItem(state.incomingBatch.id, state.incomingBatch.name, 'in', state.incomingBatch.totalSize);
+            UI.setTransferStatus(state.incomingBatch.id, "Receiving...");
+            state.zipEntries = []; // Force ZIP download
+            sendJSON({ type: 'batch-accept', id: state.incomingBatch.id });
         };
 
         function queueFiles(files)
