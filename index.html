@@ -719,6 +719,10 @@
         website settings.
     </div>
 
+    <div id="turn-warning" class="banner warning hidden">
+        <strong>Warning:</strong> Direct webRTC connection failed - connecting via TURN server. Performance may be degraded.
+    </div>
+
     <div id="toast">Message</div>
 
     <!-- HOST VIEW -->
@@ -1139,14 +1143,15 @@
             };
             if (initiator)
             {
-                state.dataChannel = pc.createDataChannel('fileStream', { ordered: true });
-                setupDataChannel();
-            }
-            log(`peer connection created (ice servers: ${iceServers?.length ? `${iceServers.length} entr${iceServers.length === 1 ? 'y' : 'ies'}` : 'none'})`);
-            return pc;
+            state.dataChannel = pc.createDataChannel('fileStream', { ordered: true });
+            setupDataChannel();
         }
 
-        function clearNegotiationTimers()
+        log(`peer connection created (ice servers: ${iceServers?.length ? `${iceServers.length} entr${iceServers.length === 1 ? 'y' : 'ies'}` : 'none'})`);
+        return pc;
+    }
+
+    function clearNegotiationTimers()
         {
             const n = state.negotiation;
             if (!n) return;
@@ -1161,6 +1166,9 @@
             n.connected = true;
             clearNegotiationTimers();
             const s = STAGES[n.stageIndex];
+            if (s && s.turn) {
+                $('turn-warning').classList.remove('hidden'); // Show TURN warning if connection established via TURN
+            }
             log(`connection established via ${s ? stageLabel(s) : 'unknown stage'}`);
             try { n.resolveConnected?.(true); } catch (err) { }
         }
