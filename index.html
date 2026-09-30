@@ -631,6 +631,37 @@
             width: 1%;
         }
 
+        #mount-table thead .cell-actions {
+            text-transform: none;
+            letter-spacing: normal;
+        }
+
+        .title-downloads {
+            display: grid;
+            grid-template-columns: repeat(6, 24px);
+        }
+
+        .title-download-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 4px;
+            border: none;
+            background: none;
+            cursor: pointer;
+            color: #86868b;
+            font-family: var(--font);
+        }
+
+        .title-download-btn:hover {
+            color: var(--primary);
+        }
+
+        .title-download-btn svg {
+            width: 15px;
+            height: 15px;
+        }
+
         .row-btn {
             border: none;
             background: transparent;
@@ -812,7 +843,12 @@
                             <th>Name</th>
                             <th>Size</th>
                             <th>Modified</th>
-                            <th></th>
+                            <th class="cell-actions">
+                                <div class="title-downloads" aria-label="Download current directory">
+                                    <button id="btn-download-current-zip" class="title-download-btn" title="Download current directory as ZIP" aria-label="Download current directory as ZIP"></button>
+                                    <button id="btn-download-current-folder" class="title-download-btn" title="Download current directory as folder" aria-label="Download current directory as folder"></button>
+                                </div>
+                            </th>
                         </tr>
                     </thead>
                     <tbody id="mount-tbody"></tbody>
@@ -1765,6 +1801,8 @@
         $('btn-upload').innerHTML = `${ICONS.upload}<span>Upload</span>`;
         $('btn-paste').innerHTML = `${ICONS.clipboard}<span>Paste</span>`;
         $('btn-refresh').innerHTML = `${ICONS.refresh}<span>Refresh</span>`;
+        $('btn-download-current-folder').innerHTML = ICONS.download;
+        $('btn-download-current-zip').innerHTML = ICONS.downloadZip;
         $('preview-close').innerHTML = ICONS.x;
 
         const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -2347,7 +2385,7 @@
         function renderEntries()
         {
             const M = state.mount;
-            $('mount-table').classList.toggle('hidden', !M.entries.length);
+            $('mount-table').classList.remove('hidden');
             $('mount-empty').classList.toggle('hidden', !!M.entries.length);
             $('mount-count').innerText = `${M.entries.length} item${M.entries.length === 1 ? '' : 's'}`;
             $('mount-tbody').innerHTML = M.entries.map(e =>
@@ -2379,13 +2417,26 @@ ${e.isDir ? `<button class="row-btn" data-action="download-zip" title="Download 
             downloadBlob(chunks, name);
         }
 
+        async function downloadCurrentDirectory(useFSAPI = true)
+        {
+            const M = state.mount;
+            if (!M || M.role !== 'client') return;
+            const path = M.cwd;
+            const name = baseName(path) || M.name;
+            return downloadEntry(path, name, true, useFSAPI);
+        }
+
         async function collectZipEntries(path, prefix, out)
         {
             const entries = await requestListing(path);
             if (!entries) throw new Error(`Failed to list "${baseName(path) || '/'}"`);
             for (const e of entries)
             {
-                if (e.isDir) await collectZipEntries(joinPath(path, e.name), `${prefix}${e.name}/`, out);
+                if (e.isDir)
+                {
+                    out.push({ path: joinPath(path, e.name), name: `${prefix}${e.name}/`, lastModified: 0, isDir: true });
+                    await collectZipEntries(joinPath(path, e.name), `${prefix}${e.name}/`, out);
+                }
                 else out.push({ path: joinPath(path, e.name), name: `${prefix}${e.name}`, lastModified: e.lastModified });
             }
         }
@@ -2401,6 +2452,11 @@ ${e.isDir ? `<button class="row-btn" data-action="download-zip" title="Download 
                 for (let i = 0; i < files.length; i++)
                 {
                     const f = files[i];
+                    if (f.isDir)
+                    {
+                        zipEntries.push({ name: f.name, chunks: [], size: 0, crc: 0, lastModified: f.lastModified });
+                        continue;
+                    }
                     update(`Downloading "${f.name}" (${i + 1}/${files.length})`);
                     const chunks = await readRemoteFile(f.path);
                     let crc = -1, size = 0;
@@ -2904,6 +2960,9 @@ ${e.isDir ? `<button class="row-btn" data-action="download-zip" title="Download 
         $('btn-paste').onclick = () => mountTask(pasteClipboard);
 
         $('btn-refresh').onclick = () => mountTask(refreshListing);
+
+        $('btn-download-current-folder').onclick = () => mountTask(() => downloadCurrentDirectory(true));
+        $('btn-download-current-zip').onclick = () => mountTask(() => downloadCurrentDirectory(false));
 
         $('preview-close').onclick = closePreview;
 
