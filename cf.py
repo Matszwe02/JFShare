@@ -24,17 +24,18 @@ POLL_INTERVAL_SEC = 60        # how often to check usage while credentials are l
 CREDENTIAL_TTL_SEC = 3600     # 1 hour default TTL for generated credentials
 
 
-def get_month_usage_gb():
+def get_usage_gb():
     """
-    Query the GraphQL Analytics API for total TURN egressBytes since the
-    start of the current calendar month.  Returns usage in GB (float).
+    Query the GraphQL Analytics API for total TURN egressBytes over
+    the last 31 days.  Returns usage in GB (float).
 
     Uses callsTurnUsageAdaptiveGroups as documented in the Realtime TURN
-    analytics docs.  A single aggregate query is used (recommended by
-    Cloudflare to avoid adaptive-sampling inaccuracies).
+    analytics docs.  A single aggregate query (limit: 1, no dimensions)
+    is used — this is the approach Cloudflare recommends to avoid
+    adaptive-sampling inaccuracies.
     """
     now = datetime.datetime.now(datetime.timezone.utc)
-    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    start = now - datetime.timedelta(days=31)
 
     query = """
     query TurnUsage($accountTag: String!, $datetimeStart: String!, $datetimeEnd: String!) {
@@ -66,7 +67,7 @@ def get_month_usage_gb():
             "query": query,
             "variables": {
                 "accountTag": ACCOUNT_ID,
-                "datetimeStart": month_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "datetimeStart": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "datetimeEnd": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
             },
         },
@@ -86,8 +87,8 @@ def get_month_usage_gb():
 
 
 def usage_exceeds_threshold():
-    """Return True if current month's TURN usage >= 90% of the free tier."""
-    used_gb = get_month_usage_gb()
+    """Return True if current month's TURN usage >= x% of the free tier."""
+    used_gb = get_usage_gb()
     limit_gb = FREE_TIER_GB * USAGE_THRESHOLD_PCT
     print(f"[usage] {used_gb:.2f} GB used / {limit_gb:.0f} GB threshold")
     return used_gb >= limit_gb
