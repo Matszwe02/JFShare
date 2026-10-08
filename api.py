@@ -7,6 +7,7 @@ import random
 from pydantic import BaseModel
 import time
 from cf import get_turn_credentials
+import store
 
 
 app = FastAPI()
@@ -18,7 +19,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-sessions = {}
+backend = store.backend
 
 class OfferPatch(BaseModel):
     offer: str | None = None
@@ -35,41 +36,43 @@ def generate_code():
 
 @app.post("/offer")
 def create_offer():
-    for s in list(sessions.keys()):
-        oa = sessions[s].get('offer') and sessions[s].get('answer')
-        if (sessions[s].get('created') or 0) + 600 * (24 if oa else .5) < time.time():
-            del(sessions[s])
+    store.cleanup()
 
     code = generate_code()
-    while code in sessions:
+    while backend.get(code) is not None:
         code = generate_code()
-    sessions[code] = {"offer": None, "answer": None, "created": time.time(), "servers": None}
+    backend.set(code, store.new_session())
     return {"code": code}
 
 
 @app.patch("/offer/{code}")
 def patch_offer(code: str, patch: OfferPatch):
-    session = sessions.get(code)
+    session = backend.get(code)
     if session is None:
-        sessions[code] = {"offer": None, "answer": None, "created": time.time()}
-        session = sessions.get(code)
+        # force-patch: recreate evicted/missing sessions
+        session = store.new_session()
     for field in patch.model_fields_set:
         session[field] = getattr(patch, field)
+    backend.set(code, session)
     return session
 
 
 @app.get("/offer/{code}")
 def get_offer(code: str):
-    if code not in sessions:
+    session = backend.get(code)
+    if session is None:
         raise HTTPException(status_code=404, detail="Not found")
-    return sessions[code]
+    return session
 
 
 @app.get("/turn/{code}")
 def get_turn(code: str):
-    session = sessions.get(code)
+    session = backend.get(code)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Not found")
     if session.get('servers'): return session
     session['servers'] = get_turn_credentials()
+    backend.set(code, session)
     print(f'Requesting TURN server - received {session["servers"]}')
     return session
 
