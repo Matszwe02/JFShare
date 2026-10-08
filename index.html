@@ -110,6 +110,7 @@ input[type="text"][readonly]{cursor:pointer}
 #preview-frame{flex:1;width:100%;border:none;background:#fff}
 #busy-box{background:var(--bg);padding:1.5rem 2.5rem;border-radius:12px;display:flex;align-items:center;gap:1rem;font-weight:600}
 </style>
+<base target="_blank">
 </head>
 <body>
 
@@ -118,6 +119,9 @@ input[type="text"][readonly]{cursor:pointer}
 </div>
 <div id="turn-warning" class="banner warning hidden">
     <strong>Warning:</strong> Direct webRTC connection failed - connecting via TURN server. Performance may be degraded.
+</div>
+<div id="reconnect-banner" class="banner warning hidden">
+    <strong>Connection lost.</strong> <span id="reconnect-text">Reconnecting…</span><span class="spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:-3px;margin-left:8px"></span>
 </div>
 <div id="toast">Message</div>
 
@@ -263,7 +267,9 @@ const CONFIG = {
     CONNECT_TIMEOUT_MS: 3000,
     TURN_CONNECT_TIMEOUT_MS: 5000,
     ICE_GATHER_MS: 2000,
-    ICE_GATHER_TURN_MS: 2000
+    ICE_GATHER_TURN_MS: 2000,
+    DISCONNECT_GRACE_MS: 4000,
+    RECONNECT_RETRY_MS: 3000
 };
 
 const log = (...args) => console.log('[webrtc]', ...args);
@@ -275,6 +281,7 @@ const state = {
     pc: null,
     dataChannel: null,
     batchQueue: [], isSending: false, currentBatch: null, currentFile: null,
+    sendSessionId: 0,
     incomingBatch: null, incomingExpectedSize: 0, incomingReceivedSize: 0,
     incomingFilePath: '', fallbackChunks: [], fileStream: null,
     baseDirHandle: null, singleFileHandle: null,
@@ -282,7 +289,12 @@ const state = {
     zipEntries: null,
     mount: null,
     apiCode: null,
-    negotiation: null
+    negotiation: null,
+    epoch: 0,
+    wasConnected: false,
+    reconnecting: false,
+    reconnectTimer: null,
+    lastOfferRaw: null
 };
 
 const sanitizeFilename = name => name.replace(/[\\/:*?"<>|]/g, '_');
@@ -359,6 +371,7 @@ const UI = {
         setTimeout(() => $('toast').classList.remove('show'), 2500);
     },
     createTransferItem(id, name, type, totalSize) {
+        if ($(`item-${id}`)) return;
         const isOut = type === 'out';
         $('transfer-list').insertAdjacentHTML('afterbegin', `
 <div class="transfer-item" id="item-${id}">
@@ -376,16 +389,23 @@ const UI = {
     },
     updateProgress(id, current, total) {
         if (!$(`pct-${id}`)) return;
-        const pct = total === 0 ? 100 : Math.min((current / total) * 100, 100);
+        const boundedCurrent = Math.min(current, total);
+        const pct = total === 0 ? 100 : Math.min((boundedCurrent / total) * 100, 100);
         $(`pct-${id}`).innerText = `${pct.toFixed(2)}%`;
         $(`bar-${id}`).style.width = `${pct}%`;
-        $(`size-${id}`).innerText = formatBytes(current);
+        $(`size-${id}`).innerText = formatBytes(boundedCurrent);
     },
     setTransferStatus(id, status, isError = false) {
         if (!$(`status-${id}`)) return;
         $(`status-${id}`).innerText = status;
         $(`status-${id}`).style.color = isError ? 'var(--danger)' : 'var(--text)';
-        if (status !== 'Done' && !isError) return;
+        if (status !== 'Done' && !isError) {
+            $(`item-${id}`).classList.remove('done');
+            $(`bar-${id}`).classList.remove('failed', 'success');
+            $(`icon-${id}`).classList.remove('icon-danger', 'icon-success');
+            $(`icon-${id}`).innerHTML = '';
+            return;
+        }
         const iconEl = $(`icon-${id}`);
         const barEl = $(`bar-${id}`);
         $(`item-${id}`).classList.add('done');
@@ -439,11 +459,7 @@ const SignalingAPI = {
     }
 };
 
-/* ---------------- Connection negotiation: 4-stage fallback state machine ----------------
- * 1. Direct P2P, host initiates (no TURN)     2. Direct P2P, client initiates (no TURN)
- * 3. Relayed P2P, host initiates (TURN)       4. Relayed P2P, client initiates (TURN)
- * Each stage tears down and re-creates the RTCPeerConnection; SDP payloads are published
- * as stage-tagged envelopes so both peers transition in lockstep and ignore stale ones. */
+/* ---------------- Connection negotiation: 4-stage fallback state machine ---------------- */
 
 const STAGES = [
     { stage: 1, initiator: 'host', turn: false },
@@ -462,7 +478,8 @@ const STAGE_MSGS = {
 const stageLabel = s => `stage ${s.stage} [${s.initiator === 'host' ? 'host offers' : 'client offers'}, ${s.turn ? 'TURN' : 'direct'}]`;
 const myRole = () => state.isHost ? 'host' : 'client';
 const stageConnectTimeout = s => s.turn ? CONFIG.TURN_CONNECT_TIMEOUT_MS : CONFIG.CONNECT_TIMEOUT_MS;
-const stageExchangeTimeout = s => s.stage === 1 ? Infinity : CONFIG.EXCHANGE_TIMEOUT_MS;
+const stageExchangeTimeout = (s, isReconnect = false) =>
+    (s.stage === 1 && !isReconnect) ? Infinity : CONFIG.EXCHANGE_TIMEOUT_MS;
 const MANUAL_STAGE = { stage: 0, initiator: 'host', turn: false };
 
 const isPeerFullyConnected = () => {
@@ -494,15 +511,29 @@ function createPeerConnection({ iceServers = CONFIG.ICE_SERVERS, initiator = fal
     teardownPeerConnection();
     const pc = new RTCPeerConnection({ iceServers });
     state.pc = pc;
+    let dropTimer = null;
+    const cancelDropCheck = () => { if (dropTimer) { clearTimeout(dropTimer); dropTimer = null; } };
+    const scheduleDropCheck = () => {
+        if (dropTimer) return;
+        dropTimer = setTimeout(() => {
+            dropTimer = null;
+            if (pc !== state.pc) return;
+            if (!isPeerFullyConnected()) handleConnectionDrop();
+        }, CONFIG.DISCONNECT_GRACE_MS);
+    };
     pc.onconnectionstatechange = () => {
         if (pc !== state.pc) return;
         log(`pc connectionState: ${pc.connectionState}`);
-        if (pc.connectionState === 'connected') markConnected();
+        if (pc.connectionState === 'connected') { cancelDropCheck(); markConnected(); }
+        else if (pc.connectionState === 'failed') { cancelDropCheck(); handleConnectionDrop(); }
+        else if (pc.connectionState === 'disconnected') scheduleDropCheck();
     };
     pc.oniceconnectionstatechange = () => {
         if (pc !== state.pc) return;
         log(`pc iceConnectionState: ${pc.iceConnectionState}`);
-        if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') markConnected();
+        if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') { cancelDropCheck(); markConnected(); }
+        else if (pc.iceConnectionState === 'failed') { cancelDropCheck(); handleConnectionDrop(); }
+        else if (pc.iceConnectionState === 'disconnected') scheduleDropCheck();
     };
     pc.onicecandidateerror = e => console.warn('[webrtc] ICE candidate error:', e.errorCode, e.errorText || '', e.url || '');
     pc.ondatachannel = e => {
@@ -527,6 +558,10 @@ function clearNegotiationTimers() {
 }
 
 function markConnected() {
+    state.wasConnected = true;
+    state.reconnecting = false;
+    if (state.reconnectTimer) { clearTimeout(state.reconnectTimer); state.reconnectTimer = null; }
+    hideReconnectBanner();
     const n = state.negotiation;
     if (!n || n.connected) return;
     n.connected = true;
@@ -566,7 +601,7 @@ async function ensureTurnCredentials(code) {
 }
 
 const makeEnvelope = (stageDef, descData) =>
-    JSON.stringify({ v: 1, stage: stageDef.stage, initiator: stageDef.initiator, desc: descData });
+    JSON.stringify({ v: 1, stage: stageDef.stage, initiator: stageDef.initiator, desc: descData, epoch: state.epoch });
 
 async function createLocalDesc(stageDef, isOffer) {
     const desc = isOffer ? await state.pc.createOffer() : await state.pc.createAnswer();
@@ -588,9 +623,10 @@ function pollForEnvelope(code, slot, stageDef, maxMs, allowLaterStages = false) 
                     let env = null;
                     try { env = JSON.parse(raw); } catch (err) { }
                     if (env?.v === 1 && typeof env.desc === 'string' &&
-                        STAGE_BY_ID[env.stage] && env.initiator === STAGE_BY_ID[env.stage].initiator) {
+                        STAGE_BY_ID[env.stage] && env.initiator === STAGE_BY_ID[env.stage].initiator &&
+                        (env.epoch ?? 0) === (state.negotiation?.epoch ?? 0)) {
                         const stageOk = env.stage === stageDef.stage || (allowLaterStages && env.stage > stageDef.stage);
-                        if (stageOk) return resolve(env);
+                        if (stageOk) return resolve({ ...env, raw });
                     }
                 }
             } catch (err) { console.warn('[webrtc] signaling poll error:', err); }
@@ -620,7 +656,7 @@ async function attemptStage(stageDef) {
             const offerData = await createLocalDesc(stageDef, true);
             await SignalingAPI.patchOffer(code, { offer: makeEnvelope(stageDef, offerData) });
             log(`${myRole()}: ${stageLabel(stageDef)} offer published — waiting for answer`);
-            const env = await pollForEnvelope(code, 'answer', stageDef, stageExchangeTimeout(stageDef));
+            const env = await pollForEnvelope(code, 'answer', stageDef, stageExchangeTimeout(stageDef, n.isReconnect));
             if (!env) return false;
             if (n.connected) return true;
             const desc = JSON.parse(await decompress(env.desc));
@@ -628,8 +664,9 @@ async function attemptStage(stageDef) {
             await state.pc.setRemoteDescription(desc);
         } else {
             log(`${myRole()}: ${stageLabel(stageDef)} waiting for offer`);
-            const env = await pollForEnvelope(code, 'offer', stageDef, stageExchangeTimeout(stageDef), true);
+            const env = await pollForEnvelope(code, 'offer', stageDef, stageExchangeTimeout(stageDef, n.isReconnect), true);
             if (!env) return false;
+            if (env.raw) state.lastOfferRaw = env.raw;
             if (n.connected) return true;
             appliedStage = STAGE_BY_ID[env.stage];
             if (appliedStage.stage !== stageDef.stage) log(`${myRole()}: fast-forward ${stageDef.stage} → ${stageLabel(appliedStage)}`);
@@ -653,10 +690,13 @@ async function attemptStage(stageDef) {
     return await awaitConnection(stageConnectTimeout(appliedStage));
 }
 
-async function runNegotiation() {
-    const n = state.negotiation = { stageIndex: -1, connected: false, stageTimer: null, pollTimer: null, turnCreds: null };
+async function runNegotiation({ isReconnect = false } = {}) {
+    const n = state.negotiation = {
+        stageIndex: -1, connected: false, stageTimer: null, pollTimer: null,
+        turnCreds: null, isReconnect, epoch: state.epoch
+    };
     n.connectedPromise = new Promise(resolve => { n.resolveConnected = resolve; });
-    log(`${myRole()}: starting connection negotiation (4-stage fallback)`);
+    log(`${myRole()}: starting connection negotiation (4-stage fallback, epoch ${n.epoch}${isReconnect ? ', reconnect' : ''})`);
     try {
         let i = 0;
         while (i < STAGES.length && !n.connected) {
@@ -672,7 +712,8 @@ async function runNegotiation() {
         console.warn('[webrtc] negotiation error:', err);
     }
     clearNegotiationTimers();
-    if (!n.connected) giveUp();
+    if (!n.connected && !isReconnect) giveUp();
+    return n.connected;
 }
 
 function giveUp() {
@@ -683,6 +724,86 @@ function giveUp() {
         $('client-loading').classList.add('hidden');
         document.querySelector('#view-client p.subtitle').innerText = 'Connection failed — reload to retry.';
     }
+}
+
+/* ---------------- Reconnection ---------------- */
+
+const showReconnectBanner = text => {
+    if (text) $('reconnect-text').innerText = text;
+    $('reconnect-banner').classList.remove('hidden');
+};
+const hideReconnectBanner = () => $('reconnect-banner').classList.add('hidden');
+
+function interruptActiveTransfers() {
+    state.sendSessionId = (state.sendSessionId || 0) + 1;
+    state.isSending = false;
+    const M = state.mount;
+    if (M) {
+        if (M.write) { try { M.write.writable.abort?.(); } catch (e) { } M.write = null; }
+        M.streaming = false;
+        if (M.read) { const r = M.read; M.read = null; r.reject(new Error('Connection lost')); }
+        if (M.wait) { const w = M.wait; M.wait = null; w({ ok: false, message: 'Connection lost' }); }
+        if (M.uploadWait) { const w = M.uploadWait; M.uploadWait = null; w({ ok: false, message: 'Connection lost' }); }
+        if (M.pendingList) { const r = M.pendingList; M.pendingList = null; M.pendingListPath = null; r(null); }
+    }
+    state.messageQueue = [];
+}
+
+function handleConnectionDrop() {
+    if (!state.wasConnected || state.reconnecting) return;
+    if (isPeerFullyConnected()) return;
+    log('connection drop detected — starting reconnection');
+    interruptActiveTransfers();
+    teardownPeerConnection();
+    if (!state.apiCode) {
+        showReconnectBanner('Reconnection is not possible in manual mode — reload both sides and reconnect.');
+        return;
+    }
+    state.reconnecting = true;
+    showReconnectBanner('Reconnecting…');
+    UI.toast('Connection lost — reconnecting…');
+    if (state.isHost) hostReconnectLoop();
+    else clientWatchLoop();
+}
+
+async function hostReconnectLoop() {
+    let attempt = 0;
+    while (state.reconnecting) {
+        attempt++;
+        state.epoch++;
+        showReconnectBanner(`Reconnecting… (attempt ${attempt})`);
+        log(`host: reconnection attempt ${attempt} (epoch ${state.epoch})`);
+        try {
+            const ok = await runNegotiation({ isReconnect: true });
+            if (ok || !state.reconnecting) break;
+        } catch (err) { console.warn('[webrtc] reconnection attempt failed:', err); }
+        if (!state.reconnecting) break;
+        await new Promise(r => { state.reconnectTimer = setTimeout(r, CONFIG.RECONNECT_RETRY_MS); });
+    }
+}
+
+async function clientWatchLoop() {
+    const tick = async () => {
+        if (!state.reconnecting) return;
+        try {
+            const data = await SignalingAPI.getAnswer(state.apiCode);
+            const raw = data?.offer;
+            if (raw && raw !== state.lastOfferRaw) {
+                let env = null;
+                try { env = JSON.parse(raw); } catch (err) { }
+                if (env?.v === 1 && typeof env.desc === 'string' && (env.epoch ?? 0) > state.epoch) {
+                    state.lastOfferRaw = raw;
+                    state.epoch = env.epoch;
+                    log(`client: new offer detected (epoch ${env.epoch}) — renegotiating`);
+                    showReconnectBanner('Reconnecting… (new offer received)');
+                    const ok = await runNegotiation({ isReconnect: true });
+                    if (ok || !state.reconnecting) return;
+                }
+            }
+        } catch (err) { console.warn('[webrtc] reconnect watch error:', err); }
+        if (state.reconnecting) state.reconnectTimer = setTimeout(tick, CONFIG.SIGNALING_POLL_MS);
+    };
+    tick();
 }
 
 async function initHost() {
@@ -764,9 +885,34 @@ function setupCopyInput(id, val, msg) {
 
 function setupDataChannel() {
     state.dataChannel.binaryType = 'arraybuffer';
-    state.dataChannel.onopen = () => { log('data channel open'); markConnected(); UI.showView('view-transfer'); };
+    state.dataChannel.onopen = () => {
+        log('data channel open');
+        markConnected();
+        UI.showView('view-transfer');
+        if (state.incomingBatch && state.incomingBatch.accepted) {
+            sendJSON({
+                type: 'resume-transfer',
+                id: state.incomingBatch.id,
+                path: state.incomingFilePath,
+                received: state.incomingReceivedSize
+            });
+        } else if (state.currentBatch) {
+            if (!state.currentBatch.accepted) {
+                sendJSON({
+                    type: 'batch-meta',
+                    id: state.currentBatch.id,
+                    name: state.currentBatch.name,
+                    totalSize: state.currentBatch.totalSize,
+                    isSingleFile: state.currentBatch.isSingleFile,
+                    fileCount: (state.currentFile ? 1 : 0) + state.currentBatch.files.length
+                });
+            }
+        } else if (!state.isSending && state.batchQueue.length) {
+            processNextBatch();
+        }
+    };
     if (state.dataChannel.readyState === 'open') state.dataChannel.onopen();
-    state.dataChannel.onclose = () => { log('data channel closed'); alert('Connection lost.'); window.location.reload(); };
+    state.dataChannel.onclose = () => { log('data channel closed'); handleConnectionDrop(); };
     state.dataChannel.onmessage = e => {
         state.messageQueue.push(e.data);
         processMessageQueue();
@@ -783,7 +929,15 @@ async function processMessageQueue() {
     state.isProcessingMessage = false;
 }
 
-const sendJSON = msg => state.dataChannel.send(JSON.stringify(msg));
+const sendJSON = msg => {
+    const dc = state.dataChannel;
+    if (!dc || dc.readyState !== 'open') {
+        console.warn('[webrtc] send dropped — channel not open:', msg?.type);
+        return false;
+    }
+    dc.send(JSON.stringify(msg));
+    return true;
+};
 
 async function handleSignal(msg) {
     if (await handleMountSignal(msg)) return;
@@ -792,33 +946,92 @@ async function handleSignal(msg) {
 
     switch (type) {
         case 'batch-meta':
-            state.incomingBatch = { ...msg, transferred: 0 };
-            state.zipEntries = (!state.hasFSAPI && !msg.isSingleFile) ? [] : null;
-            UI.showIncomingModal(state.incomingBatch);
+            if (state.incomingBatch && state.incomingBatch.id === msg.id) {
+                if (!state.incomingBatch.accepted) {
+                    UI.showIncomingModal(state.incomingBatch);
+                }
+            } else {
+                state.incomingBatch = { ...msg, transferred: 0, accepted: false };
+                state.zipEntries = (!state.hasFSAPI && !msg.isSingleFile) ? [] : null;
+                UI.showIncomingModal(state.incomingBatch);
+            }
             break;
         case 'batch-accept':
+            if (state.currentBatch) state.currentBatch.accepted = true;
             sendNextFile();
+            break;
+        case 'resume-transfer':
+            if (state.currentBatch && state.currentBatch.id === msg.id) {
+                state.isSending = true;
+                state.currentBatch.accepted = true;
+
+                const path = msg.path;
+                const received = msg.received || 0;
+
+                if (state.currentFile && state.currentFile.path === path) {
+                    if (received >= state.currentFile.file.size) {
+                        sendNextFile();
+                    } else {
+                        state.currentFile.offset = received;
+                        state.currentBatch.transferred = (state.currentBatch.completedBytes || 0) + received;
+                        UI.updateProgress(state.currentBatch.id, state.currentBatch.transferred, state.currentBatch.totalSize);
+                        sendFileChunks(received);
+                    }
+                } else if (state.currentBatch.files.some(f => f.path === path)) {
+                    const idx = state.currentBatch.files.findIndex(f => f.path === path);
+                    if (state.currentFile) {
+                        state.currentBatch.completedBytes = (state.currentBatch.completedBytes || 0) + state.currentFile.file.size;
+                    }
+                    const item = state.currentBatch.files.splice(idx, 1)[0];
+                    state.currentFile = { file: item.file, path: item.path, offset: received };
+                    if (received >= state.currentFile.file.size) {
+                        sendNextFile();
+                    } else {
+                        state.currentBatch.transferred = (state.currentBatch.completedBytes || 0) + received;
+                        UI.updateProgress(state.currentBatch.id, state.currentBatch.transferred, state.currentBatch.totalSize);
+                        sendFileChunks(received);
+                    }
+                } else if (state.currentFile) {
+                    if (received >= state.currentFile.file.size) {
+                        sendNextFile();
+                    } else {
+                        state.currentFile.offset = received;
+                        state.currentBatch.transferred = (state.currentBatch.completedBytes || 0) + received;
+                        UI.updateProgress(state.currentBatch.id, state.currentBatch.transferred, state.currentBatch.totalSize);
+                        sendFileChunks(received);
+                    }
+                } else {
+                    sendNextFile();
+                }
+            }
             break;
         case 'file-meta':
             state.incomingExpectedSize = size;
-            state.incomingReceivedSize = 0;
-            state.incomingFilePath = path;
-            state.fallbackChunks = [];
+            if (state.incomingFilePath !== path) {
+                state.incomingFilePath = path;
+                state.incomingReceivedSize = 0;
+                state.fallbackChunks = [];
+            }
 
             if (state.zipEntries) {
-                size === 0 ? handleEmptyFile() : sendJSON({ type: 'file-ready' });
+                size === 0 ? handleEmptyFile() : sendJSON({ type: 'file-ready', offset: state.incomingReceivedSize });
             } else if (state.hasFSAPI) {
                 try {
-                    const isSingle = state.incomingBatch?.isSingleFile;
-                    let handle = isSingle ? state.singleFileHandle : state.baseDirHandle;
-                    if (!isSingle) {
-                        const parts = path.split('/');
-                        const filename = sanitizeFilename(parts.pop());
-                        for (const p of parts) if (p) handle = await handle.getDirectoryHandle(sanitizeFilename(p), { create: true });
-                        handle = await handle.getFileHandle(filename, { create: true });
+                    if (!state.fileStream) {
+                        const isSingle = state.incomingBatch?.isSingleFile;
+                        let handle = isSingle ? state.singleFileHandle : state.baseDirHandle;
+                        if (!isSingle) {
+                            const parts = path.split('/');
+                            const filename = sanitizeFilename(parts.pop());
+                            for (const p of parts) if (p) handle = await handle.getDirectoryHandle(sanitizeFilename(p), { create: true });
+                            handle = await handle.getFileHandle(filename, { create: true });
+                        }
+                        state.fileStream = await handle.createWritable({ keepExistingData: true });
+                        if (state.incomingReceivedSize > 0) {
+                            await state.fileStream.seek(state.incomingReceivedSize);
+                        }
                     }
-                    state.fileStream = await handle.createWritable();
-                    size === 0 ? handleEmptyFile() : sendJSON({ type: 'file-ready' });
+                    size === 0 ? handleEmptyFile() : sendJSON({ type: 'file-ready', offset: state.incomingReceivedSize });
                 } catch (e) {
                     console.warn(`${e}`);
                     if (confirm(`File "${path}" could not be copied. Skip this file?`)) sendJSON({ type: 'file-done' });
@@ -828,11 +1041,11 @@ async function handleSignal(msg) {
                     }
                 }
             } else {
-                size === 0 ? handleEmptyFile() : sendJSON({ type: 'file-ready' });
+                size === 0 ? handleEmptyFile() : sendJSON({ type: 'file-ready', offset: state.incomingReceivedSize });
             }
             break;
         case 'file-ready':
-            sendFileChunks();
+            sendFileChunks(msg.offset || state.currentFile?.offset || 0);
             break;
         case 'file-done':
             sendNextFile();
@@ -860,7 +1073,11 @@ async function handleSignal(msg) {
 }
 
 async function handleEmptyFile() {
-    if (state.fileStream) { await state.fileStream.close(); state.fileStream = null; }
+    if (state.fileStream) { 
+        const fs = state.fileStream; 
+        state.fileStream = null; 
+        await fs.close(); 
+    }
     else if (state.zipEntries) pushZipEntry(state.incomingFilePath, []);
     else {
         downloadBlob([], state.incomingFilePath.split('/').pop());
@@ -908,8 +1125,12 @@ async function handleChunk(data) {
 
     UI.updateProgress(state.incomingBatch.id, state.incomingBatch.transferred, state.incomingBatch.totalSize);
 
-    if (state.incomingReceivedSize === state.incomingExpectedSize) {
-        if (state.fileStream) { await state.fileStream.close(); state.fileStream = null; }
+    if (state.incomingReceivedSize >= state.incomingExpectedSize) {
+        if (state.fileStream) { 
+            const fs = state.fileStream; 
+            state.fileStream = null; 
+            await fs.close(); 
+        }
         else if (state.zipEntries) {
             pushZipEntry(state.incomingFilePath, state.fallbackChunks);
             state.fallbackChunks = [];
@@ -925,6 +1146,9 @@ function processNextBatch() {
     if (!state.batchQueue.length) { state.isSending = false; return; }
     state.isSending = true;
     state.currentBatch = state.batchQueue[0];
+    state.currentBatch.completedBytes = 0;
+    state.currentBatch.transferred = 0;
+    state.currentBatch.accepted = false;
     UI.setTransferStatus(state.currentBatch.id, 'Waiting for receiver...');
     sendJSON({
         type: 'batch-meta',
@@ -938,6 +1162,10 @@ function processNextBatch() {
 
 function sendNextFile() {
     if (!state.currentBatch) return;
+    if (state.currentFile) {
+        state.currentBatch.completedBytes = (state.currentBatch.completedBytes || 0) + state.currentFile.file.size;
+        state.currentFile = null;
+    }
     if (!state.currentBatch.files.length) {
         sendJSON({ type: 'batch-done', id: state.currentBatch.id });
         UI.setTransferStatus(state.currentBatch.id, 'Done');
@@ -946,30 +1174,45 @@ function sendNextFile() {
         processNextBatch();
         return;
     }
-    state.currentFile = state.currentBatch.files.shift();
+    const nextItem = state.currentBatch.files.shift();
+    state.currentFile = { file: nextItem.file, path: nextItem.path, offset: 0 };
     sendJSON({ type: 'file-meta', path: state.currentFile.path, size: state.currentFile.file.size });
 }
 
-function sendFileChunks() {
+function sendFileChunks(startOffset = 0) {
     if (!state.currentFile || !state.currentBatch) return;
     const { file } = state.currentFile;
-    let offset = 0;
+    let offset = (typeof startOffset === 'number') ? startOffset : (state.currentFile.offset || 0);
+    state.currentFile.offset = offset;
     state.dataChannel.bufferedAmountLowThreshold = CONFIG.BUFFER_THRESHOLD;
     UI.setTransferStatus(state.currentBatch.id, 'Sending...');
 
+    state.sendSessionId = (state.sendSessionId || 0) + 1;
+    const currentSession = state.sendSessionId;
+
     const push = () => {
+        if (state.sendSessionId !== currentSession) return;
         if (offset >= file.size) return;
-        if (state.dataChannel.bufferedAmount > CONFIG.BUFFER_THRESHOLD) {
-            state.dataChannel.onbufferedamountlow = () => { state.dataChannel.onbufferedamountlow = null; push(); };
+        const dc = state.dataChannel;
+        if (!dc || dc.readyState !== 'open' || !state.currentBatch) return;
+        if (dc.bufferedAmount > CONFIG.BUFFER_THRESHOLD) {
+            dc.onbufferedamountlow = () => { 
+                if (state.sendSessionId === currentSession) {
+                    dc.onbufferedamountlow = null; 
+                    push(); 
+                }
+            };
             return;
         }
         file.slice(offset, offset + CONFIG.CHUNK_SIZE).arrayBuffer().then(buf => {
+            if (state.sendSessionId !== currentSession || !state.dataChannel || state.dataChannel.readyState !== 'open' || !state.currentBatch) return;
             state.dataChannel.send(buf);
             offset += buf.byteLength;
-            state.currentBatch.transferred += buf.byteLength;
+            state.currentFile.offset = offset;
+            state.currentBatch.transferred = (state.currentBatch.completedBytes || 0) + offset;
             UI.updateProgress(state.currentBatch.id, state.currentBatch.transferred, state.currentBatch.totalSize);
             push();
-        });
+        }).catch(err => console.warn('[webrtc] chunk send failed:', err));
     };
     push();
 }
@@ -1829,8 +2072,7 @@ function queueUploads(items) {
         const total = items.reduce((sum, it) => sum + it.file.size, 0);
         let sent = 0;
         $('upload-status').classList.remove('hidden');
-        $('upload-status-bar').classList.remove('success', 'failed');
-        $('upload-status-bar').style.width = '0%';
+        $('upload-status-bar').classList.remove('success', 'failed');$('upload-status-bar').style.width = '0%';
         try {
             for (let i = 0; i < items.length; i++) {
                 const item = items[i];
@@ -1839,12 +2081,10 @@ function queueUploads(items) {
                 sent += item.file.size;
                 updateUploadUI(sent, total, label);
             }
-            $('upload-status-bar').classList.add('success');
-            $('upload-status-text').innerText = 'Upload complete';
+            $('upload-status-bar').classList.add('success');$('upload-status-text').innerText = 'Upload complete';
             sendJSON({ type: 'fs-list', path: destCwd });
         } catch (err) {
-            $('upload-status-text').innerText = 'Upload failed';
-            $('upload-status-bar').classList.add('failed');
+            $('upload-status-text').innerText = 'Upload failed';$('upload-status-bar').classList.add('failed');
             throw err;
         } finally {
             setTimeout(() => {
@@ -1961,7 +2201,7 @@ $('btn-new-folder').onclick = () => mountTask(async () => {
     await refreshListing();
 });
 
-$('btn-upload').onclick = () => $('upload-input').click();
+$('btn-upload').onclick = () =>$('upload-input').click();
 
 $('upload-input').addEventListener('change', e => {
     queueUploads([...e.target.files].map(f => ({ file: f, rel: f.webkitRelativePath || f.name })));
@@ -1969,13 +2209,10 @@ $('upload-input').addEventListener('change', e => {
 });
 
 $('btn-paste').onclick = () => mountTask(pasteClipboard);
-$('btn-refresh').onclick = () => mountTask(refreshListing);
-$('btn-download-current-folder').onclick = () => mountTask(() => downloadCurrentDirectory(true));
-$('btn-download-current-zip').onclick = () => mountTask(() => downloadCurrentDirectory(false));
-$('preview-close').onclick = closePreview;
+$('btn-refresh').onclick = () => mountTask(refreshListing);$('btn-download-current-folder').onclick = () => mountTask(() => downloadCurrentDirectory(true));
+$('btn-download-current-zip').onclick = () => mountTask(() => downloadCurrentDirectory(false));$('preview-close').onclick = closePreview;
 
-$('btn-accept').onclick = async () => {
-    $('accept-overlay').classList.add('hidden');
+$('btn-accept').onclick = async () => {$('accept-overlay').classList.add('hidden');
     try {
         if (state.hasFSAPI) {
             const opts = { startIn: 'downloads' };
@@ -1983,28 +2220,30 @@ $('btn-accept').onclick = async () => {
                 ? (state.singleFileHandle = await window.showSaveFilePicker({ ...opts, suggestedName: state.incomingBatch.name }))
                 : (state.baseDirHandle = await window.showDirectoryPicker({ ...opts, mode: 'readwrite' }));
         }
+        if (state.incomingBatch) state.incomingBatch.accepted = true;
         UI.createTransferItem(state.incomingBatch.id, state.incomingBatch.name, 'in', state.incomingBatch.totalSize);
         UI.setTransferStatus(state.incomingBatch.id, 'Receiving...');
         sendJSON({ type: 'batch-accept', id: state.incomingBatch.id });
     } catch (e) {
-        UI.createTransferItem(state.incomingBatch.id, state.incomingBatch.name, 'in', state.incomingBatch.totalSize);
-        UI.setTransferStatus(state.incomingBatch.id, 'Cancelled', true);
-        sendJSON({ type: 'error', id: state.incomingBatch.id, message: 'Cancelled file/folder selection.' });
+        if (state.incomingBatch) {
+            UI.createTransferItem(state.incomingBatch.id, state.incomingBatch.name, 'in', state.incomingBatch.totalSize);
+            UI.setTransferStatus(state.incomingBatch.id, 'Cancelled', true);
+            sendJSON({ type: 'error', id: state.incomingBatch.id, message: 'Cancelled file/folder selection.' });
+        }
     }
 };
 
-$('btn-reject').onclick = () => {
-    $('accept-overlay').classList.add('hidden');
+$('btn-reject').onclick = () => {$('accept-overlay').classList.add('hidden');
     UI.createTransferItem(state.incomingBatch.id, state.incomingBatch.name, 'in', state.incomingBatch.totalSize);
     UI.setTransferStatus(state.incomingBatch.id, 'Rejected', true);
     sendJSON({ type: 'error', id: state.incomingBatch.id, message: 'Rejected by receiver.' });
 };
 
-$('btn-accept-zip').onclick = async () => {
-    $('accept-overlay').classList.add('hidden');
+$('btn-accept-zip').onclick = async () => {$('accept-overlay').classList.add('hidden');
+    if (state.incomingBatch) state.incomingBatch.accepted = true;
     UI.createTransferItem(state.incomingBatch.id, state.incomingBatch.name, 'in', state.incomingBatch.totalSize);
     UI.setTransferStatus(state.incomingBatch.id, 'Receiving...');
-    state.zipEntries = []; // Force ZIP download
+    state.zipEntries = [];
     sendJSON({ type: 'batch-accept', id: state.incomingBatch.id });
 };
 
