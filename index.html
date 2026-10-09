@@ -44,11 +44,14 @@ input[type="text"][readonly]{cursor:pointer}
 .badge{font-size:.8rem;padding:2px 8px;border-radius:12px;font-weight:bold}
 .badge.out{background:#e8f0fe;color:var(--primary)}
 .badge.in{background:#e6f4ea;color:var(--success)}
+.badge.success{background:#e6f4ea;color:var(--success)}
+.badge.failed{background:#ffe5e5;color:var(--danger)}
 .progress-track{width:100%;height:8px;background:var(--gray);border-radius:4px;overflow:hidden}
 .progress-bar{height:100%;background:var(--primary);width:0;transition:width .1s linear}
 .progress-bar.success{background:var(--success)}
 .progress-bar.failed{background:var(--danger);width:100%}
 .transfer-stats{font-size:.85rem;color:#86868b;display:flex;justify-content:space-between}
+.transfer-stats span {white-space: pre-line;}
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.85);backdrop-filter:blur(8px);z-index:1000;display:flex;justify-content:center;align-items:center}
 .modal{background:var(--bg);padding:2rem;border-radius:12px;width:90%;max-width:400px;text-align:center}
 .modal h2{margin-bottom:1rem}
@@ -411,6 +414,86 @@ const downloadBlob = (chunks, name) => {
 const OK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
 const ERR_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
 
+/* Speed and ETA tracking using a 1-minute rolling window */
+const transferSpeedTracker = {};
+const activeTransfers = {};
+
+function formatSpeed(bytesPerSec) {
+    if (!bytesPerSec || bytesPerSec < 0 || !isFinite(bytesPerSec)) return '0.00 MB/s';
+    const mbps = bytesPerSec / (1024 * 1024);
+    return `${mbps.toFixed(2)} MB/s`;
+}
+
+function formatETA(seconds) {
+    if (seconds === null || seconds === undefined || !isFinite(seconds) || seconds < 0) return '--';
+    if (seconds === 0) return '0s';
+    const s = Math.ceil(seconds);
+    if (s < 60) return `${s}s`;
+    if (s < 3600) {
+        const m = Math.floor(s / 60);
+        const remS = s % 60;
+        return remS > 0 ? `${m}m ${remS}s` : `${m}m`;
+    }
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+function calculateSpeedAndETA(id, current, total) {
+    const now = Date.now();
+    if (!transferSpeedTracker[id]) {
+        transferSpeedTracker[id] = [];
+    }
+    const tracker = transferSpeedTracker[id];
+
+    if (tracker.length === 0 || now - tracker[tracker.length - 1].time >= 100) {
+        tracker.push({ time: now, bytes: current });
+    } else {
+        tracker[tracker.length - 1] = { time: now, bytes: current };
+    }
+
+    // Maintain a rolling (10,000 ms) sample window
+    while (tracker.length > 1 && (now - tracker[0].time) > 10000) {
+        tracker.shift();
+    }
+
+    let speed = 0;
+    let eta = null;
+
+    if (tracker.length > 1) {
+        const oldest = tracker[0];
+        const newest = tracker[tracker.length - 1];
+        const timeDiff = (newest.time - oldest.time) / 1000;
+        const bytesDiff = newest.bytes - oldest.bytes;
+
+        if (timeDiff > 0 && bytesDiff >= 0) {
+            speed = bytesDiff / timeDiff;
+        }
+    }
+
+    const remaining = Math.max(0, total - current);
+    if (current >= total) {
+        speed = 0;
+        eta = 0;
+    } else if (speed > 0) {
+        eta = remaining / speed;
+    }
+
+    const speedEtaEl = $(`speed-eta-${id}`);
+    if (speedEtaEl) {
+        speedEtaEl.innerText = `${formatSpeed(speed)}\nETA: ${formatETA(eta)}`;
+    }
+}
+
+setInterval(() => {
+    for (const id in activeTransfers) {
+        const transfer = activeTransfers[id];
+        if (transfer) {
+            calculateSpeedAndETA(id, transfer.current, transfer.total);
+        }
+    }
+}, 1000);
+
 const UI = {
     showView(id) {
         document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
@@ -424,16 +507,18 @@ const UI = {
     createTransferItem(id, name, type, totalSize) {
         if ($(`item-${id}`)) return;
         const isOut = type === 'out';
+        activeTransfers[id] = { current: 0, total: totalSize };
+        transferSpeedTracker[id] = [{ time: Date.now(), bytes: 0 }];
         $('transfer-list').insertAdjacentHTML('afterbegin', `
 <div class="transfer-item" id="item-${id}">
 <div id="icon-${id}" class="status-icon"></div>
 <div class="transfer-header">
 <span class="transfer-name" title="${name}">${name}</span>
-<span class="badge ${isOut ? 'out' : 'in'}">${isOut ? 'Sending' : 'Receiving'}</span>
+<span id="badge-${id}" class="badge ${isOut ? 'out' : 'in'}">${isOut ? 'Sending' : 'Receiving'}</span>
 </div>
 <div class="progress-track"><div id="bar-${id}" class="progress-bar"></div></div>
 <div class="transfer-stats">
-<span id="status-${id}">Pending...</span>
+<span id="speed-eta-${id}">0.00 MB/s\nETA: --</span>
 <span><span id="size-${id}">0 B</span> / ${formatBytes(totalSize)} (<span id="pct-${id}">0%</span>)</span>
 </div>
 </div>`);
@@ -445,29 +530,57 @@ const UI = {
         $(`pct-${id}`).innerText = `${pct.toFixed(2)}%`;
         $(`bar-${id}`).style.width = `${pct}%`;
         $(`size-${id}`).innerText = formatBytes(boundedCurrent);
+
+        if (activeTransfers[id]) {
+            activeTransfers[id].current = boundedCurrent;
+            activeTransfers[id].total = total;
+        } else {
+            activeTransfers[id] = { current: boundedCurrent, total };
+        }
+
+        calculateSpeedAndETA(id, boundedCurrent, total);
     },
     setTransferStatus(id, status, isError = false) {
-        if (!$(`status-${id}`)) return;
-        $(`status-${id}`).innerText = status;
-        $(`status-${id}`).style.color = isError ? 'var(--danger)' : 'var(--text)';
+        const badgeEl = $(`badge-${id}`);
+        if (badgeEl) {
+            badgeEl.innerText = status;
+            if (isError) {
+                badgeEl.className = 'badge failed';
+            } else if (status === 'Done') {
+                badgeEl.className = 'badge success';
+            }
+        }
+
+        if (status === 'Done' || isError) {
+            delete activeTransfers[id];
+            const speedEtaEl = $(`speed-eta-${id}`);
+            if (speedEtaEl) {
+                if (status === 'Done') {
+                    speedEtaEl.innerText = '0.00 MB/s\nETA: 0s';
+                } else {
+                    speedEtaEl.innerText = '-- MB/s\nETA: --';
+                }
+            }
+        }
+
         if (status !== 'Done' && !isError) {
-            $(`item-${id}`).classList.remove('done');
-            $(`bar-${id}`).classList.remove('failed', 'success');
-            $(`icon-${id}`).classList.remove('icon-danger', 'icon-success');
-            $(`icon-${id}`).innerHTML = '';
+            $(`item-${id}`)?.classList.remove('done');
+            $(`bar-${id}`)?.classList.remove('failed', 'success');
+            $(`icon-${id}`)?.classList.remove('icon-danger', 'icon-success');
+            if ($(`icon-${id}`)) $(`icon-${id}`).innerHTML = '';
             return;
         }
         const iconEl = $(`icon-${id}`);
         const barEl = $(`bar-${id}`);
-        $(`item-${id}`).classList.add('done');
+        $(`item-${id}`)?.classList.add('done');
         if (isError) {
-            barEl.classList.add('failed');
-            iconEl.classList.add('icon-danger');
-            iconEl.innerHTML = ERR_SVG;
+            barEl?.classList.add('failed');
+            iconEl?.classList.add('icon-danger');
+            if (iconEl) iconEl.innerHTML = ERR_SVG;
         } else {
-            barEl.classList.add('success');
-            iconEl.classList.add('icon-success');
-            iconEl.innerHTML = OK_SVG;
+            barEl?.classList.add('success');
+            iconEl?.classList.add('icon-success');
+            if (iconEl) iconEl.innerHTML = OK_SVG;
         }
     },
     showIncomingModal(batch) {
@@ -1381,7 +1494,7 @@ async function handleSignal(msg) {
             }
             break;
         case 'error':
-            UI.setTransferStatus(id, `Error: ${message}`, true);
+            UI.setTransferStatus(id, `${message}`, true);
             if (state.currentBatch?.id === id) {
                 state.batchQueue.shift();
                 state.currentBatch = null;
@@ -1468,7 +1581,7 @@ function processNextBatch() {
     state.currentBatch.completedBytes = 0;
     state.currentBatch.transferred = 0;
     state.currentBatch.accepted = false;
-    UI.setTransferStatus(state.currentBatch.id, 'Waiting for receiver...');
+    UI.setTransferStatus(state.currentBatch.id, 'Waiting');
     sendJSON({
         type: 'batch-meta',
         id: state.currentBatch.id,
@@ -1504,7 +1617,7 @@ function sendFileChunks(startOffset = 0) {
     let offset = (typeof startOffset === 'number') ? startOffset : (state.currentFile.offset || 0);
     state.currentFile.offset = offset;
     state.dataChannel.bufferedAmountLowThreshold = CONFIG.BUFFER_THRESHOLD;
-    UI.setTransferStatus(state.currentBatch.id, 'Sending...');
+    UI.setTransferStatus(state.currentBatch.id, 'Sending');
 
     state.sendSessionId = (state.sendSessionId || 0) + 1;
     const currentSession = state.sendSessionId;
@@ -2541,13 +2654,13 @@ $('btn-accept').onclick = async () => {$('accept-overlay').classList.add('hidden
         }
         if (state.incomingBatch) state.incomingBatch.accepted = true;
         UI.createTransferItem(state.incomingBatch.id, state.incomingBatch.name, 'in', state.incomingBatch.totalSize);
-        UI.setTransferStatus(state.incomingBatch.id, 'Receiving...');
+        UI.setTransferStatus(state.incomingBatch.id, 'Receiving');
         sendJSON({ type: 'batch-accept', id: state.incomingBatch.id });
     } catch (e) {
         if (state.incomingBatch) {
             UI.createTransferItem(state.incomingBatch.id, state.incomingBatch.name, 'in', state.incomingBatch.totalSize);
             UI.setTransferStatus(state.incomingBatch.id, 'Cancelled', true);
-            sendJSON({ type: 'error', id: state.incomingBatch.id, message: 'Cancelled file/folder selection.' });
+            sendJSON({ type: 'error', id: state.incomingBatch.id, message: 'Cancelled file/folder selection' });
         }
     }
 };
@@ -2555,13 +2668,13 @@ $('btn-accept').onclick = async () => {$('accept-overlay').classList.add('hidden
 $('btn-reject').onclick = () => {$('accept-overlay').classList.add('hidden');
     UI.createTransferItem(state.incomingBatch.id, state.incomingBatch.name, 'in', state.incomingBatch.totalSize);
     UI.setTransferStatus(state.incomingBatch.id, 'Rejected', true);
-    sendJSON({ type: 'error', id: state.incomingBatch.id, message: 'Rejected by receiver.' });
+    sendJSON({ type: 'error', id: state.incomingBatch.id, message: 'Rejected by receiver' });
 };
 
 $('btn-accept-zip').onclick = async () => {$('accept-overlay').classList.add('hidden');
     if (state.incomingBatch) state.incomingBatch.accepted = true;
     UI.createTransferItem(state.incomingBatch.id, state.incomingBatch.name, 'in', state.incomingBatch.totalSize);
-    UI.setTransferStatus(state.incomingBatch.id, 'Receiving...');
+    UI.setTransferStatus(state.incomingBatch.id, 'Receiving');
     state.zipEntries = [];
     sendJSON({ type: 'batch-accept', id: state.incomingBatch.id });
 };
