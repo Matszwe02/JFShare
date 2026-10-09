@@ -121,7 +121,7 @@ input[type="text"][readonly]{cursor:pointer}
     <strong>Warning:</strong> Direct webRTC connection failed - connecting via TURN server. Performance may be degraded.
 </div>
 <div id="reconnect-banner" class="banner warning hidden">
-    <strong>Connection lost.</strong> <span id="reconnect-text">Reconnecting…</span><span class="spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:-3px;margin-left:8px"></span>
+    <span id="reconnect-text">Reconnecting…</span><span class="spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:-3px;margin-left:8px"></span>
 </div>
 <div id="toast">Message</div>
 
@@ -269,7 +269,9 @@ const CONFIG = {
     ICE_GATHER_MS: 2000,
     ICE_GATHER_TURN_MS: 2000,
     DISCONNECT_GRACE_MS: 4000,
-    RECONNECT_RETRY_MS: 3000
+    RECONNECT_RETRY_MS: 3000,
+    RECONNECT_TIMEOUT_MS: 10 * 60 * 1000,
+    INITIAL_CONNECT_TIMEOUT_MS: 10 * 60 * 1000
 };
 
 const log = (...args) => console.log('[webrtc]', ...args);
@@ -436,19 +438,22 @@ const SignalingAPI = {
         return res.ok ? await res.json() : null;
     },
     async patchOffer(code, data) {
-        await fetch(`${CONFIG.API_URL}/offer/${code}`, {
+        const res = await fetch(`${CONFIG.API_URL}/offer/${code}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
             signal: AbortSignal.timeout(5000)
         });
+        if (res.status === 404) throw { status: 404, message: 'Stale offer' };
     },
     async getAnswer(code) {
         const res = await fetch(`${CONFIG.API_URL}/offer/${code}`, { signal: AbortSignal.timeout(5000) });
+        if (res.status === 404) throw { status: 404, message: 'Stale offer' };
         return res.ok ? await res.json() : null;
     },
     async getTurn(code) {
         const res = await fetch(`${CONFIG.API_URL}/turn/${code}`, { signal: AbortSignal.timeout(5000) });
+        if (res.status === 404) throw { status: 404, message: 'Stale offer' };
         if (!res.ok) {
             console.warn('[webrtc] GET /turn failed:', res.status);
             return null;
@@ -479,7 +484,7 @@ const stageLabel = s => `stage ${s.stage} [${s.initiator === 'host' ? 'host offe
 const myRole = () => state.isHost ? 'host' : 'client';
 const stageConnectTimeout = s => s.turn ? CONFIG.TURN_CONNECT_TIMEOUT_MS : CONFIG.CONNECT_TIMEOUT_MS;
 const stageExchangeTimeout = (s, isReconnect = false) =>
-    (s.stage === 1 && !isReconnect) ? Infinity : CONFIG.EXCHANGE_TIMEOUT_MS;
+    (s.stage === 1 && !isReconnect) ? CONFIG.INITIAL_CONNECT_TIMEOUT_MS : CONFIG.EXCHANGE_TIMEOUT_MS;
 const MANUAL_STAGE = { stage: 0, initiator: 'host', turn: false };
 
 const isPeerFullyConnected = () => {
@@ -555,6 +560,7 @@ function clearNegotiationTimers() {
     if (!n) return;
     if (n.stageTimer) { clearTimeout(n.stageTimer); n.stageTimer = null; }
     if (n.pollTimer) { clearTimeout(n.pollTimer); n.pollTimer = null; }
+    if (n.initialTimer) { clearTimeout(n.initialTimer); n.initialTimer = null; }
 }
 
 function markConnected() {
@@ -574,6 +580,7 @@ function markConnected() {
 
 function awaitConnection(timeoutMs) {
     const n = state.negotiation;
+    if (!n) return Promise.resolve(false);
     if (n.connected) return Promise.resolve(true);
     if (isPeerFullyConnected()) { markConnected(); return Promise.resolve(true); }
     return Promise.race([
@@ -592,7 +599,13 @@ async function ensureTurnCredentials(code) {
     const n = state.negotiation;
     if (n.turnCreds?.length) return n.turnCreds;
     let creds = null;
-    try { creds = await SignalingAPI.getTurn(code); } catch (err) { console.warn('[webrtc] TURN credential fetch failed:', err); }
+    try { creds = await SignalingAPI.getTurn(code); } catch (err) {
+        if (err?.status === 404) {
+            handleStaleCode();
+            throw err;
+        }
+        console.warn('[webrtc] TURN credential fetch failed:', err);
+    }
     if (creds?.length) {
         n.turnCreds = creds;
         log(`TURN credentials ready (${creds.length} server entries)`);
@@ -616,6 +629,7 @@ function pollForEnvelope(code, slot, stageDef, maxMs, allowLaterStages = false) 
     return new Promise(resolve => {
         const deadline = maxMs === Infinity ? Infinity : Date.now() + maxMs;
         const tick = async () => {
+            if (state.negotiation?.connected || !state.apiCode) return resolve(null);
             try {
                 const data = await SignalingAPI.getAnswer(code);
                 const raw = data?.[slot];
@@ -629,9 +643,17 @@ function pollForEnvelope(code, slot, stageDef, maxMs, allowLaterStages = false) 
                         if (stageOk) return resolve({ ...env, raw });
                     }
                 }
-            } catch (err) { console.warn('[webrtc] signaling poll error:', err); }
+            } catch (err) {
+                if (err?.status === 404) {
+                    handleStaleCode();
+                    return resolve(null);
+                }
+                console.warn('[webrtc] signaling poll error:', err);
+            }
             if (Date.now() >= deadline) { log(`${myRole()}: ${slot} polling window expired`); return resolve(null); }
-            state.negotiation.pollTimer = setTimeout(tick, CONFIG.SIGNALING_POLL_MS);
+            if (state.negotiation && !state.negotiation.connected) {
+                state.negotiation.pollTimer = setTimeout(tick, CONFIG.SIGNALING_POLL_MS);
+            }
         };
         tick();
     });
@@ -645,7 +667,7 @@ async function attemptStage(stageDef) {
     log(`${myRole()}: attempting ${stageLabel(stageDef)} (${isInitiator ? 'initiator' : 'answerer'})`);
     if (!state.isHost)
         document.querySelector('#view-client p.subtitle').innerText =
-            stageDef.stage === 1 ? 'Connecting…' : `Retrying connection (attempt ${stageDef.stage}/4)…`;
+            stageDef.stage === 1 ? 'Connecting…' : 'Retrying connection…';
 
     let appliedStage = stageDef;
     try {
@@ -684,6 +706,10 @@ async function attemptStage(stageDef) {
                 document.querySelector('#view-client p.subtitle').innerText = 'Answer sent! Waiting for host...';
         }
     } catch (err) {
+        if (err?.status === 404) {
+            handleStaleCode();
+            return false;
+        }
         console.warn(`[webrtc] ${stageLabel(appliedStage)} attempt failed:`, err);
         return false;
     }
@@ -692,11 +718,21 @@ async function attemptStage(stageDef) {
 
 async function runNegotiation({ isReconnect = false } = {}) {
     const n = state.negotiation = {
-        stageIndex: -1, connected: false, stageTimer: null, pollTimer: null,
+        stageIndex: -1, connected: false, stageTimer: null, pollTimer: null, initialTimer: null,
         turnCreds: null, isReconnect, epoch: state.epoch
     };
     n.connectedPromise = new Promise(resolve => { n.resolveConnected = resolve; });
     log(`${myRole()}: starting connection negotiation (4-stage fallback, epoch ${n.epoch}${isReconnect ? ', reconnect' : ''})`);
+
+    if (!isReconnect && state.apiCode) {
+        n.initialTimer = setTimeout(() => {
+            if (state.negotiation === n && !n.connected) {
+                log('Initial connection timed out (10 min)');
+                handleInitialTimeout();
+            }
+        }, CONFIG.INITIAL_CONNECT_TIMEOUT_MS);
+    }
+
     try {
         let i = 0;
         while (i < STAGES.length && !n.connected) {
@@ -709,18 +745,67 @@ async function runNegotiation({ isReconnect = false } = {}) {
             i = nextIndex;
         }
     } catch (err) {
-        console.warn('[webrtc] negotiation error:', err);
+        if (err?.status === 404) handleStaleCode();
+        else console.warn('[webrtc] negotiation error:', err);
     }
     clearNegotiationTimers();
     if (!n.connected && !isReconnect) giveUp();
     return n.connected;
 }
 
+function handleInitialTimeout() {
+    log('Initial API connection timed out — stopping all requests');
+    state.reconnecting = false;
+    if (state.reconnectTimer) { clearTimeout(state.reconnectTimer); state.reconnectTimer = null; }
+    clearNegotiationTimers();
+    teardownPeerConnection();
+
+    if (state.isHost) {
+        showReconnectBanner('Initial connection timed out. ', false);
+        const btn = document.createElement('a');
+        btn.href = '#';
+        btn.style.cssText = 'color:inherit;font-weight:600;text-decoration:underline;cursor:pointer;margin-left:5px';
+        btn.innerText = 'Click to generate new code';
+        btn.onclick = e => {
+            e.preventDefault();
+            hideReconnectBanner();
+            initHost();
+        };
+        $('reconnect-text').appendChild(btn);
+
+        const subtitle = document.querySelector('#view-host p.subtitle');
+        if (subtitle) {
+            subtitle.innerHTML = 'Initial connection timed out. <a href="#" style="color:var(--primary);font-weight:bold" id="link-gen-new-timeout">Click to generate new code</a>';
+            const link = $('link-gen-new-timeout');
+            if (link) link.onclick = e => { e.preventDefault(); initHost(); };
+        }
+    } else {
+        showReconnectBanner('Initial connection timed out. ', false);
+        const btn = document.createElement('a');
+        btn.href = '#';
+        btn.style.cssText = 'color:inherit;font-weight:600;text-decoration:underline;cursor:pointer;margin-left:5px';
+        btn.innerText = 'Click to restart';
+        btn.onclick = e => {
+            e.preventDefault();
+            window.location.href = window.location.pathname;
+        };
+        $('reconnect-text').appendChild(btn);
+
+        const subtitle = document.querySelector('#view-client p.subtitle');
+        if (subtitle) {
+            subtitle.innerHTML = 'Initial connection timed out. <a href="#" style="color:var(--primary);font-weight:bold" onclick="window.location.href=window.location.pathname">Click to restart</a>';
+        }
+        $('client-loading')?.classList.add('hidden');
+    }
+}
+
 function giveUp() {
     teardownPeerConnection();
     log('negotiation: all 4 stages failed — giving up');
     UI.toast('Connection failed');
-    if (!state.isHost) {
+    if (state.apiCode) {
+        handleInitialTimeout();
+    } else if (!state.isHost) {
         $('client-loading').classList.add('hidden');
         document.querySelector('#view-client p.subtitle').innerText = 'Connection failed — reload to retry.';
     }
@@ -728,11 +813,83 @@ function giveUp() {
 
 /* ---------------- Reconnection ---------------- */
 
-const showReconnectBanner = text => {
+const showReconnectBanner = (text, showSpinner = true) => {
     if (text) $('reconnect-text').innerText = text;
-    $('reconnect-banner').classList.remove('hidden');
+    const banner = $('reconnect-banner');
+    const spinner = banner.querySelector('.spinner');
+    if (spinner) spinner.style.display = showSpinner ? 'inline-block' : 'none';
+    banner.classList.remove('hidden');
 };
+
 const hideReconnectBanner = () => $('reconnect-banner').classList.add('hidden');
+
+function handleStaleCode() {
+    log('Stale code (404) detected — stopping all requests');
+    state.reconnecting = false;
+    if (state.reconnectTimer) { clearTimeout(state.reconnectTimer); state.reconnectTimer = null; }
+    clearNegotiationTimers();
+    teardownPeerConnection();
+
+    if (state.isHost) {
+        showReconnectBanner('Session expired. ', false);
+        const btn = document.createElement('a');
+        btn.href = '#';
+        btn.style.cssText = 'color:inherit;font-weight:600;text-decoration:underline;cursor:pointer;margin-left:5px';
+        btn.innerText = 'Click to generate new code';
+        btn.onclick = e => {
+            e.preventDefault();
+            hideReconnectBanner();
+            initHost();
+        };
+        $('reconnect-text').appendChild(btn);
+
+        const subtitle = document.querySelector('#view-host p.subtitle');
+        if (subtitle) {
+            subtitle.innerHTML = 'Session expired. <a href="#" style="color:var(--primary);font-weight:bold" id="link-gen-new">Click to generate new code</a>';
+            const link = $('link-gen-new');
+            if (link) link.onclick = e => { e.preventDefault(); initHost(); };
+        }
+    } else {
+        showReconnectBanner('Session expired. ', false);
+        const btn = document.createElement('a');
+        btn.href = '#';
+        btn.style.cssText = 'color:inherit;font-weight:600;text-decoration:underline;cursor:pointer;margin-left:5px';
+        btn.innerText = 'Click to restart';
+        btn.onclick = e => {
+            e.preventDefault();
+            window.location.href = window.location.pathname;
+        };
+        $('reconnect-text').appendChild(btn);
+
+        const subtitle = document.querySelector('#view-client p.subtitle');
+        if (subtitle) {
+            subtitle.innerHTML = 'Session expired. <a href="#" style="color:var(--primary);font-weight:bold" onclick="window.location.href=window.location.pathname">Click to restart</a>';
+        }
+        $('client-loading')?.classList.add('hidden');
+    }
+}
+
+function showManualReconnectPrompt(role) {
+    if (state.reconnectTimer) { clearTimeout(state.reconnectTimer); state.reconnectTimer = null; }
+    state.reconnecting = false;
+
+    showReconnectBanner('Reconnection failed. ', false);
+
+    const btn = document.createElement('a');
+    btn.href = '#';
+    btn.style.cssText = 'color:inherit;font-weight:600;text-decoration:underline;cursor:pointer;margin-left:5px';
+    btn.innerText = 'Click to reconnect';
+    btn.onclick = e => {
+        e.preventDefault();
+        state.reconnecting = true;
+        if (role === 'host') {
+            hostReconnectLoop();
+        } else {
+            clientWatchLoop();
+        }
+    };
+    $('reconnect-text').appendChild(btn);
+}
 
 function interruptActiveTransfers() {
     state.sendSessionId = (state.sendSessionId || 0) + 1;
@@ -756,35 +913,57 @@ function handleConnectionDrop() {
     interruptActiveTransfers();
     teardownPeerConnection();
     if (!state.apiCode) {
-        showReconnectBanner('Reconnection is not possible in manual mode — reload both sides and reconnect.');
+        showReconnectBanner('Reconnection is not possible in manual mode — reload both sides and reconnect.', false);
         return;
     }
     state.reconnecting = true;
-    showReconnectBanner('Reconnecting…');
+    showReconnectBanner('Reconnecting…', true);
     UI.toast('Connection lost — reconnecting…');
     if (state.isHost) hostReconnectLoop();
     else clientWatchLoop();
 }
 
 async function hostReconnectLoop() {
-    let attempt = 0;
-    while (state.reconnecting) {
-        attempt++;
+    const startTime = Date.now();
+    while (state.reconnecting && (Date.now() - startTime) < CONFIG.RECONNECT_TIMEOUT_MS) {
         state.epoch++;
-        showReconnectBanner(`Reconnecting… (attempt ${attempt})`);
-        log(`host: reconnection attempt ${attempt} (epoch ${state.epoch})`);
+        showReconnectBanner('Reconnecting…', true);
+        log(`host: reconnection attempt (epoch ${state.epoch})`);
         try {
             const ok = await runNegotiation({ isReconnect: true });
             if (ok || !state.reconnecting) break;
-        } catch (err) { console.warn('[webrtc] reconnection attempt failed:', err); }
+        } catch (err) {
+            if (err?.status === 404) {
+                handleStaleCode();
+                return;
+            }
+            console.warn('[webrtc] reconnection attempt failed:', err);
+        }
         if (!state.reconnecting) break;
-        await new Promise(r => { state.reconnectTimer = setTimeout(r, CONFIG.RECONNECT_RETRY_MS); });
+        if ((Date.now() - startTime) < CONFIG.RECONNECT_TIMEOUT_MS) {
+            await new Promise(r => { state.reconnectTimer = setTimeout(r, CONFIG.RECONNECT_RETRY_MS); });
+        }
+    }
+
+    if (state.reconnecting && (Date.now() - startTime) >= CONFIG.RECONNECT_TIMEOUT_MS) {
+        showManualReconnectPrompt('host');
     }
 }
 
 async function clientWatchLoop() {
+    const startTime = Date.now();
+
     const tick = async () => {
         if (!state.reconnecting) return;
+
+        if ((Date.now() - startTime) >= CONFIG.RECONNECT_TIMEOUT_MS) {
+            showManualReconnectPrompt('client');
+            return;
+        }
+
+        showReconnectBanner('Reconnecting…', true);
+        log('client: reconnect watch tick');
+
         try {
             const data = await SignalingAPI.getAnswer(state.apiCode);
             const raw = data?.offer;
@@ -795,18 +974,45 @@ async function clientWatchLoop() {
                     state.lastOfferRaw = raw;
                     state.epoch = env.epoch;
                     log(`client: new offer detected (epoch ${env.epoch}) — renegotiating`);
-                    showReconnectBanner('Reconnecting… (new offer received)');
+                    showReconnectBanner('Reconnecting…', true);
                     const ok = await runNegotiation({ isReconnect: true });
                     if (ok || !state.reconnecting) return;
                 }
             }
-        } catch (err) { console.warn('[webrtc] reconnect watch error:', err); }
-        if (state.reconnecting) state.reconnectTimer = setTimeout(tick, CONFIG.SIGNALING_POLL_MS);
+        } catch (err) {
+            if (err?.status === 404) {
+                handleStaleCode();
+                return;
+            }
+            console.warn('[webrtc] reconnect watch error:', err);
+        }
+
+        if (!state.reconnecting) return;
+
+        if ((Date.now() - startTime) >= CONFIG.RECONNECT_TIMEOUT_MS) {
+            showManualReconnectPrompt('client');
+            return;
+        }
+
+        state.reconnectTimer = setTimeout(tick, CONFIG.SIGNALING_POLL_MS);
     };
+
     tick();
 }
 
 async function initHost() {
+    state.reconnecting = false;
+    if (state.reconnectTimer) { clearTimeout(state.reconnectTimer); state.reconnectTimer = null; }
+    clearNegotiationTimers();
+    teardownPeerConnection();
+    hideReconnectBanner();
+    state.epoch = 0;
+
+    const subtitle = document.querySelector('#view-host p.subtitle');
+    if (subtitle) subtitle.innerText = 'Share this link with another pc:';
+    $('share-url').value = '';
+    $('share-url').placeholder = 'Generating link...';
+
     try {
         log('host: initializing (API mode)');
         const apiRes = await SignalingAPI.postOffer();
@@ -849,6 +1055,10 @@ async function initClient(encodedOffer, apiCode = null) {
             const probe = await SignalingAPI.getAnswer(apiCode);
             if (probe === null) throw new Error('Invalid code');
         } catch (err) {
+            if (err?.status === 404) {
+                handleStaleCode();
+                return;
+            }
             alert('Failed to connect. Link may be invalid.');
             window.location.href = window.location.pathname;
             return;
