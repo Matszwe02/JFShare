@@ -47,6 +47,7 @@ def create_offer():
 
 @app.patch("/offer/{code}")
 def patch_offer(code: str, patch: OfferPatch):
+    store.cleanup()
     session = backend.get(code)
     if session is None:
         # force-patch: recreate evicted/missing sessions
@@ -59,6 +60,7 @@ def patch_offer(code: str, patch: OfferPatch):
 
 @app.get("/offer/{code}")
 def get_offer(code: str):
+    store.cleanup()
     session = backend.get(code)
     if session is None:
         raise HTTPException(status_code=404, detail="Not found")
@@ -67,6 +69,7 @@ def get_offer(code: str):
 
 @app.get("/turn/{code}")
 def get_turn(code: str):
+    store.cleanup()
     session = backend.get(code)
     if session is None:
         raise HTTPException(status_code=404, detail="Not found")
