@@ -277,6 +277,52 @@ const CONFIG = {
 const log = (...args) => console.log('[webrtc]', ...args);
 const $ = id => document.getElementById(id);
 
+const AuthCrypto = {
+    async generateKeyPair() {
+        return await window.crypto.subtle.generateKey(
+            { name: 'ECDSA', namedCurve: 'P-256' },
+            true,
+            ['sign', 'verify']
+        );
+    },
+    async exportPubKey(keyPair) {
+        const jwk = await window.crypto.subtle.exportKey('jwk', keyPair.publicKey);
+        return JSON.stringify(jwk);
+    },
+    async importPubKey(jwkStr) {
+        return await window.crypto.subtle.importKey(
+            'jwk',
+            JSON.parse(jwkStr),
+            { name: 'ECDSA', namedCurve: 'P-256' },
+            true,
+            ['verify']
+        );
+    },
+    async signPayload(privateKey, payloadStr) {
+        const sig = await window.crypto.subtle.sign(
+            { name: 'ECDSA', hash: { name: 'SHA-256' } },
+            privateKey,
+            new TextEncoder().encode(payloadStr)
+        );
+        return btoa(String.fromCharCode(...new Uint8Array(sig)));
+    },
+    async verifyPayload(publicKey, payloadStr, sigB64) {
+        try {
+            const binary = atob(sigB64);
+            const sigBytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) sigBytes[i] = binary.charCodeAt(i);
+            return await window.crypto.subtle.verify(
+                { name: 'ECDSA', hash: { name: 'SHA-256' } },
+                publicKey,
+                sigBytes,
+                new TextEncoder().encode(payloadStr)
+            );
+        } catch (e) {
+            return false;
+        }
+    }
+};
+
 const state = {
     hasFSAPI: ('showDirectoryPicker' in window),
     isHost: false,
@@ -296,7 +342,9 @@ const state = {
     wasConnected: false,
     reconnecting: false,
     reconnectTimer: null,
-    lastOfferRaw: null
+    lastOfferRaw: null,
+    localKeyPair: null,
+    remotePubKey: null
 };
 
 const sanitizeFilename = name => name.replace(/[\\/:*?"<>|]/g, '_');
@@ -613,8 +661,14 @@ async function ensureTurnCredentials(code) {
     return creds;
 }
 
-const makeEnvelope = (stageDef, descData) =>
-    JSON.stringify({ v: 1, stage: stageDef.stage, initiator: stageDef.initiator, desc: descData, epoch: state.epoch });
+async function makeEnvelope(stageDef, descData) {
+    const env = { v: 1, stage: stageDef.stage, initiator: stageDef.initiator, desc: descData, epoch: state.epoch };
+    if (state.epoch > 0 && state.localKeyPair && state.apiCode) {
+        const payloadStr = `${state.apiCode}:${env.epoch}:${env.stage}:${env.initiator}:${env.desc}`;
+        env.sig = await AuthCrypto.signPayload(state.localKeyPair.privateKey, payloadStr);
+    }
+    return JSON.stringify(env);
+}
 
 async function createLocalDesc(stageDef, isOffer) {
     const desc = isOffer ? await state.pc.createOffer() : await state.pc.createAnswer();
@@ -639,6 +693,21 @@ function pollForEnvelope(code, slot, stageDef, maxMs, allowLaterStages = false) 
                     if (env?.v === 1 && typeof env.desc === 'string' &&
                         STAGE_BY_ID[env.stage] && env.initiator === STAGE_BY_ID[env.stage].initiator &&
                         (env.epoch ?? 0) === (state.negotiation?.epoch ?? 0)) {
+
+                        if (env.epoch > 0 && state.remotePubKey) {
+                            if (!env.sig) {
+                                log('[security] Reconnection payload missing signature! Ignoring payload.');
+                                return scheduleNext();
+                            }
+                            const payloadStr = `${code}:${env.epoch}:${env.stage}:${env.initiator}:${env.desc}`;
+                            const isValid = await AuthCrypto.verifyPayload(state.remotePubKey, payloadStr, env.sig);
+                            if (!isValid) {
+                                log('[security] Signature verification FAILED on reconnection payload! Ignoring payload.');
+                                return scheduleNext();
+                            }
+                            log('[security] Reconnection payload signature verified successfully.');
+                        }
+
                         const stageOk = env.stage === stageDef.stage || (allowLaterStages && env.stage > stageDef.stage);
                         if (stageOk) return resolve({ ...env, raw });
                     }
@@ -650,6 +719,9 @@ function pollForEnvelope(code, slot, stageDef, maxMs, allowLaterStages = false) 
                 }
                 console.warn('[webrtc] signaling poll error:', err);
             }
+            scheduleNext();
+        };
+        const scheduleNext = () => {
             if (Date.now() >= deadline) { log(`${myRole()}: ${slot} polling window expired`); return resolve(null); }
             if (state.negotiation && !state.negotiation.connected) {
                 state.negotiation.pollTimer = setTimeout(tick, CONFIG.SIGNALING_POLL_MS);
@@ -676,7 +748,7 @@ async function attemptStage(stageDef) {
             if (n.connected) return true;
             createPeerConnection({ iceServers: creds?.length ? creds : CONFIG.ICE_SERVERS, initiator: true });
             const offerData = await createLocalDesc(stageDef, true);
-            await SignalingAPI.patchOffer(code, { offer: makeEnvelope(stageDef, offerData) });
+            await SignalingAPI.patchOffer(code, { offer: await makeEnvelope(stageDef, offerData) });
             log(`${myRole()}: ${stageLabel(stageDef)} offer published — waiting for answer`);
             const env = await pollForEnvelope(code, 'answer', stageDef, stageExchangeTimeout(stageDef, n.isReconnect));
             if (!env) return false;
@@ -700,7 +772,7 @@ async function attemptStage(stageDef) {
             log(`${myRole()}: ${stageLabel(appliedStage)} offer received (ufrag: ${desc.sdp?.match(/a=ice-ufrag:(\S+)/)?.[1] ?? '?'})`);
             await state.pc.setRemoteDescription(desc);
             const answerData = await createLocalDesc(appliedStage, false);
-            await SignalingAPI.patchOffer(code, { answer: makeEnvelope(appliedStage, answerData) });
+            await SignalingAPI.patchOffer(code, { answer: await makeEnvelope(appliedStage, answerData) });
             log(`${myRole()}: ${stageLabel(appliedStage)} answer published`);
             if (appliedStage.stage === 1 && !state.isHost)
                 document.querySelector('#view-client p.subtitle').innerText = 'Answer sent! Waiting for host...';
@@ -971,6 +1043,19 @@ async function clientWatchLoop() {
                 let env = null;
                 try { env = JSON.parse(raw); } catch (err) { }
                 if (env?.v === 1 && typeof env.desc === 'string' && (env.epoch ?? 0) > state.epoch) {
+                    if ((env.epoch ?? 0) > 0 && state.remotePubKey) {
+                        if (!env.sig) {
+                            log('[security] Reconnect offer missing signature! Ignoring.');
+                            return scheduleNextWatch();
+                        }
+                        const payloadStr = `${state.apiCode}:${env.epoch}:${env.stage}:${env.initiator}:${env.desc}`;
+                        const isValid = await AuthCrypto.verifyPayload(state.remotePubKey, payloadStr, env.sig);
+                        if (!isValid) {
+                            log('[security] Signature verification FAILED on reconnect offer! Ignoring.');
+                            return scheduleNextWatch();
+                        }
+                        log('[security] Reconnect offer signature verified successfully.');
+                    }
                     state.lastOfferRaw = raw;
                     state.epoch = env.epoch;
                     log(`client: new offer detected (epoch ${env.epoch}) — renegotiating`);
@@ -987,6 +1072,10 @@ async function clientWatchLoop() {
             console.warn('[webrtc] reconnect watch error:', err);
         }
 
+        scheduleNextWatch();
+    };
+
+    const scheduleNextWatch = () => {
         if (!state.reconnecting) return;
 
         if ((Date.now() - startTime) >= CONFIG.RECONNECT_TIMEOUT_MS) {
@@ -1002,6 +1091,8 @@ async function clientWatchLoop() {
 
 async function initHost() {
     state.reconnecting = false;
+    state.localKeyPair = null;
+    state.remotePubKey = null;
     if (state.reconnectTimer) { clearTimeout(state.reconnectTimer); state.reconnectTimer = null; }
     clearNegotiationTimers();
     teardownPeerConnection();
@@ -1050,6 +1141,8 @@ async function initHost() {
 }
 
 async function initClient(encodedOffer, apiCode = null) {
+    state.localKeyPair = null;
+    state.remotePubKey = null;
     if (apiCode) {
         try {
             const probe = await SignalingAPI.getAnswer(apiCode);
@@ -1095,10 +1188,17 @@ function setupCopyInput(id, val, msg) {
 
 function setupDataChannel() {
     state.dataChannel.binaryType = 'arraybuffer';
-    state.dataChannel.onopen = () => {
+    state.dataChannel.onopen = async () => {
         log('data channel open');
         markConnected();
         UI.showView('view-transfer');
+
+        if (!state.localKeyPair) {
+            state.localKeyPair = await AuthCrypto.generateKeyPair();
+        }
+        const pubKeyStr = await AuthCrypto.exportPubKey(state.localKeyPair);
+        sendJSON({ type: 'auth-pubkey', pubKey: pubKeyStr });
+
         if (state.incomingBatch && state.incomingBatch.accepted) {
             sendJSON({
                 type: 'resume-transfer',
@@ -1155,6 +1255,14 @@ async function handleSignal(msg) {
     const { type, id, path, size, message } = msg;
 
     switch (type) {
+        case 'auth-pubkey':
+            try {
+                state.remotePubKey = await AuthCrypto.importPubKey(msg.pubKey);
+                log('Remote peer public key registered for secure re-authentication.');
+            } catch (e) {
+                console.warn('[crypto] Failed to import remote public key:', e);
+            }
+            break;
         case 'batch-meta':
             if (state.incomingBatch && state.incomingBatch.id === msg.id) {
                 if (!state.incomingBatch.accepted) {
