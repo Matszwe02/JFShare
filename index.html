@@ -414,7 +414,7 @@ const downloadBlob = (chunks, name) => {
 const OK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
 const ERR_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
 
-/* Speed and ETA tracking using a 1-minute rolling window */
+/* Speed and ETA tracking using a rolling window */
 const transferSpeedTracker = {};
 const activeTransfers = {};
 
@@ -439,20 +439,21 @@ function formatETA(seconds) {
     return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
-function calculateSpeedAndETA(id, current, total) {
+function updateSpeedAndETA(id) {
+    const transfer = activeTransfers[id];
+    if (!transfer) return;
+
+    const { current, total } = transfer;
     const now = Date.now();
+
     if (!transferSpeedTracker[id]) {
         transferSpeedTracker[id] = [];
     }
     const tracker = transferSpeedTracker[id];
 
-    if (tracker.length === 0 || now - tracker[tracker.length - 1].time >= 100) {
-        tracker.push({ time: now, bytes: current });
-    } else {
-        tracker[tracker.length - 1] = { time: now, bytes: current };
-    }
+    tracker.push({ time: now, bytes: current });
 
-    // Maintain a rolling (10,000 ms) sample window
+    // Rolling sample window
     while (tracker.length > 1 && (now - tracker[0].time) > 10000) {
         tracker.shift();
     }
@@ -462,35 +463,41 @@ function calculateSpeedAndETA(id, current, total) {
 
     if (tracker.length > 1) {
         const oldest = tracker[0];
-        const newest = tracker[tracker.length - 1];
-        const timeDiff = (newest.time - oldest.time) / 1000;
-        const bytesDiff = newest.bytes - oldest.bytes;
+        const timeDiff = (now - oldest.time) / 1000;
+        const bytesDiff = current - oldest.bytes;
 
-        if (timeDiff > 0 && bytesDiff >= 0) {
+        if (timeDiff >= 0.5 && bytesDiff >= 0) {
             speed = bytesDiff / timeDiff;
         }
     }
 
-    const remaining = Math.max(0, total - current);
-    if (current >= total) {
+    if (current >= total && total > 0) {
         speed = 0;
         eta = 0;
     } else if (speed > 0) {
-        eta = remaining / speed;
+        const remaining = Math.max(0, total - current);
+        const rawEta = remaining / speed;
+
+        // Exponential Moving Average (EMA) smoothing on ETA to eliminate jiggling
+        if (transfer.smoothedEta !== undefined && isFinite(transfer.smoothedEta)) {
+            transfer.smoothedEta = 0.7 * transfer.smoothedEta + 0.3 * rawEta;
+        } else {
+            transfer.smoothedEta = rawEta;
+        }
+        eta = transfer.smoothedEta;
     }
 
     const speedEtaEl = $(`speed-eta-${id}`);
     if (speedEtaEl) {
-        speedEtaEl.innerText = `${formatSpeed(speed)}\nETA: ${formatETA(eta)}`;
+        const etaStr = (current >= total) ? '0s' : formatETA(eta);
+        speedEtaEl.innerText = `${formatSpeed(speed)}\nETA: ${etaStr}`;
     }
 }
 
+/* Throttled 1-second interval update for Speed & ETA */
 setInterval(() => {
     for (const id in activeTransfers) {
-        const transfer = activeTransfers[id];
-        if (transfer) {
-            calculateSpeedAndETA(id, transfer.current, transfer.total);
-        }
+        updateSpeedAndETA(id);
     }
 }, 1000);
 
@@ -531,14 +538,12 @@ const UI = {
         $(`bar-${id}`).style.width = `${pct}%`;
         $(`size-${id}`).innerText = formatBytes(boundedCurrent);
 
-        if (activeTransfers[id]) {
+        if (!activeTransfers[id]) {
+            activeTransfers[id] = { current: boundedCurrent, total };
+        } else {
             activeTransfers[id].current = boundedCurrent;
             activeTransfers[id].total = total;
-        } else {
-            activeTransfers[id] = { current: boundedCurrent, total };
         }
-
-        calculateSpeedAndETA(id, boundedCurrent, total);
     },
     setTransferStatus(id, status, isError = false) {
         const badgeEl = $(`badge-${id}`);
@@ -553,6 +558,7 @@ const UI = {
 
         if (status === 'Done' || isError) {
             delete activeTransfers[id];
+            delete transferSpeedTracker[id];
             const speedEtaEl = $(`speed-eta-${id}`);
             if (speedEtaEl) {
                 if (status === 'Done') {
@@ -1348,7 +1354,11 @@ async function processMessageQueue() {
     state.isProcessingMessage = true;
     while (state.messageQueue.length > 0) {
         const data = state.messageQueue.shift();
-        typeof data === 'string' ? await handleSignal(JSON.parse(data)) : await handleChunk(data);
+        try {
+            typeof data === 'string' ? await handleSignal(JSON.parse(data)) : await handleChunk(data);
+        } catch (err) {
+            console.error('[webrtc] error processing chunk/message:', err);
+        }
     }
     state.isProcessingMessage = false;
 }
@@ -1581,7 +1591,7 @@ function processNextBatch() {
     state.currentBatch.completedBytes = 0;
     state.currentBatch.transferred = 0;
     state.currentBatch.accepted = false;
-    UI.setTransferStatus(state.currentBatch.id, 'Waiting');
+    UI.setTransferStatus(state.currentBatch.id, 'Accepting');
     sendJSON({
         type: 'batch-meta',
         id: state.currentBatch.id,
