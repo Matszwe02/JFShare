@@ -494,11 +494,73 @@ function updateSpeedAndETA(id) {
     }
 }
 
+/* WakeLock and Reload Protection */
+let wakeLock = null;
+
+async function requestWakeLock() {
+    if (!('wakeLock' in navigator)) return;
+    try {
+        if (!wakeLock) {
+            wakeLock = await navigator.wakeLock.request('screen');
+            wakeLock.addEventListener('release', () => {
+                wakeLock = null;
+            });
+            log('Wake Lock acquired');
+        }
+    } catch (err) {
+        console.warn('Wake Lock request failed:', err);
+    }
+}
+
+async function releaseWakeLock() {
+    if (wakeLock) {
+        try {
+            await wakeLock.release();
+            log('Wake Lock released');
+        } catch (err) {
+            console.warn('Wake Lock release failed:', err);
+        }
+        wakeLock = null;
+    }
+}
+
+function checkActiveOperations() {
+    const isMounted = !!state.mount;
+    const isUploading = state.isSending || !!state.mount?.streaming || !!state.mount?.write || (state.mount?.role === 'client' && !$('upload-status').classList.contains('hidden'));
+    const isDownloading = !!state.incomingBatch || !!state.mount?.read;
+    const hasActiveTransfers = Object.keys(activeTransfers).length > 0;
+
+    return isMounted || isUploading || isDownloading || hasActiveTransfers;
+}
+
+function updateWakeLock() {
+    if (checkActiveOperations()) {
+        requestWakeLock();
+    } else {
+        releaseWakeLock();
+    }
+}
+
+document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState === 'visible' && checkActiveOperations()) {
+        await requestWakeLock();
+    }
+});
+
+window.addEventListener('beforeunload', (e) => {
+    if (checkActiveOperations() || isPeerFullyConnected() || state.reconnecting) {
+        e.preventDefault();
+        e.returnValue = 'An active connection or file transfer is in progress. Reloading will cancel active transfers.';
+        return e.returnValue;
+    }
+});
+
 /* Throttled 1-second interval update for Speed & ETA */
 setInterval(() => {
     for (const id in activeTransfers) {
         updateSpeedAndETA(id);
     }
+    updateWakeLock();
 }, 1000);
 
 const UI = {
@@ -529,6 +591,7 @@ const UI = {
 <span><span id="size-${id}">0 B</span> / ${formatBytes(totalSize)} (<span id="pct-${id}">0%</span>)</span>
 </div>
 </div>`);
+        updateWakeLock();
     },
     updateProgress(id, current, total) {
         if (!$(`pct-${id}`)) return;
@@ -574,6 +637,7 @@ const UI = {
             $(`bar-${id}`)?.classList.remove('failed', 'success');
             $(`icon-${id}`)?.classList.remove('icon-danger', 'icon-success');
             if ($(`icon-${id}`)) $(`icon-${id}`).innerHTML = '';
+            updateWakeLock();
             return;
         }
         const iconEl = $(`icon-${id}`);
@@ -588,6 +652,7 @@ const UI = {
             iconEl?.classList.add('icon-success');
             if (iconEl) iconEl.innerHTML = OK_SVG;
         }
+        updateWakeLock();
     },
     showIncomingModal(batch) {
         $('incoming-filename').innerText = batch.name;
@@ -1096,6 +1161,7 @@ function interruptActiveTransfers() {
         if (M.pendingList) { const r = M.pendingList; M.pendingList = null; M.pendingListPath = null; r(null); }
     }
     state.messageQueue = [];
+    updateWakeLock();
 }
 
 function handleConnectionDrop() {
@@ -1104,6 +1170,7 @@ function handleConnectionDrop() {
     log('connection drop detected — starting reconnection');
     interruptActiveTransfers();
     teardownPeerConnection();
+    updateWakeLock();
     if (!state.apiCode) {
         showReconnectBanner('Reconnection is not possible in manual mode — reload both sides and reconnect.', false);
         return;
@@ -1397,6 +1464,7 @@ async function handleSignal(msg) {
                 state.zipEntries = (!state.hasFSAPI && !msg.isSingleFile) ? [] : null;
                 UI.showIncomingModal(state.incomingBatch);
             }
+            updateWakeLock();
             break;
         case 'batch-accept':
             if (state.currentBatch) state.currentBatch.accepted = true;
@@ -1502,6 +1570,7 @@ async function handleSignal(msg) {
                 UI.setTransferStatus(state.incomingBatch.id, 'Done');
                 state.incomingBatch = null;
             }
+            updateWakeLock();
             break;
         case 'error':
             UI.setTransferStatus(id, `${message}`, true);
@@ -1510,6 +1579,7 @@ async function handleSignal(msg) {
                 state.currentBatch = null;
                 processNextBatch();
             }
+            updateWakeLock();
             break;
     }
 }
@@ -1585,8 +1655,9 @@ async function handleChunk(data) {
 }
 
 function processNextBatch() {
-    if (!state.batchQueue.length) { state.isSending = false; return; }
+    if (!state.batchQueue.length) { state.isSending = false; updateWakeLock(); return; }
     state.isSending = true;
+    updateWakeLock();
     state.currentBatch = state.batchQueue[0];
     state.currentBatch.completedBytes = 0;
     state.currentBatch.transferred = 0;
@@ -1603,7 +1674,7 @@ function processNextBatch() {
 }
 
 function sendNextFile() {
-    if (!state.currentBatch) return;
+    if (!state.currentBatch) { updateWakeLock(); return; }
     if (state.currentFile) {
         state.currentBatch.completedBytes = (state.currentBatch.completedBytes || 0) + state.currentFile.file.size;
         state.currentFile = null;
@@ -1619,6 +1690,7 @@ function sendNextFile() {
     const nextItem = state.currentBatch.files.shift();
     state.currentFile = { file: nextItem.file, path: nextItem.path, offset: 0 };
     sendJSON({ type: 'file-meta', path: state.currentFile.path, size: state.currentFile.file.size });
+    updateWakeLock();
 }
 
 function sendFileChunks(startOffset = 0) {
@@ -1832,6 +1904,7 @@ async function startMountServer() {
     state.isSending = false;
     state.mount = { role: 'server', dirHandle, name: dirHandle.name, opQueue: Promise.resolve(), write: null, streaming: false };
     enterMountUI('server');
+    updateWakeLock();
     sendJSON({ type: 'mount-start', name: dirHandle.name });
 }
 
@@ -1845,6 +1918,8 @@ function exitMountUI() {
     $('mount-ui').classList.add('hidden');
     closePreview();
     $('busy-overlay').classList.add('hidden');
+    state.mount = null;
+    updateWakeLock();
 }
 
 async function fsGetDir(path) {
@@ -1945,6 +2020,7 @@ async function handleFsServerOp(msg) {
                     const { dir, name } = await fsGetParent(msg.path);
                     const file = await (await dir.getFileHandle(name)).getFile();
                     M.streaming = true;
+                    updateWakeLock();
                     sendJSON({ type: 'fs-read-start', path: msg.path, id: msg.id, size: file.size });
                     if (file.size > 0) await streamOut(file, file.size);
                     sendJSON({ type: 'fs-read-end', path: msg.path, id: msg.id });
@@ -1952,6 +2028,7 @@ async function handleFsServerOp(msg) {
                     sendJSON({ type: 'fs-error', op: 'read', id: msg.id, message: err?.message || `${err}` });
                 } finally {
                     M.streaming = false;
+                    updateWakeLock();
                 }
             })();
             break;
@@ -2006,6 +2083,7 @@ async function handleFsServerOp(msg) {
                 const { dir, name } = await fsGetParent(msg.path, true);
                 const fh = await dir.getFileHandle(sanitizeFilename(name), { create: true });
                 M.write = { writable: await fh.createWritable(), path: msg.path };
+                updateWakeLock();
                 sendJSON({ type: 'fs-ready' });
             } catch (err) {
                 sendJSON({ type: 'fs-error', op: 'upload', message: err?.message || `${err}` });
@@ -2015,6 +2093,7 @@ async function handleFsServerOp(msg) {
             const w = M.write;
             if (!w) break;
             M.write = null;
+            updateWakeLock();
             try {
                 await w.writable.close();
                 sendJSON({ type: 'fs-ok', op: 'upload' });
@@ -2044,7 +2123,6 @@ async function handleMountSignal(msg) {
             return true;
         case 'mount-error':
             if (M?.role === 'server') {
-                state.mount = null;
                 exitMountUI();
                 UI.toast(msg.message || 'Directory sharing was rejected');
             }
@@ -2125,6 +2203,7 @@ function startMountClient(name) {
     };
     $('mount-share-name').innerText = name;
     enterMountUI('client');
+    updateWakeLock();
     requestListing('');
 }
 
@@ -2161,6 +2240,7 @@ function readRemoteFile(path, onProgress) {
     return new Promise((resolve, reject) => {
         const id = ++state.mount.readSeq;
         state.mount.read = { id, path, chunks: [], received: 0, expected: -1, onProgress, resolve, reject };
+        updateWakeLock();
         sendJSON({ type: 'fs-read', path, id });
     });
 }
@@ -2169,6 +2249,7 @@ function finishRead() {
     const r = state.mount?.read;
     if (!r) return;
     state.mount.read = null;
+    updateWakeLock();
     r.resolve(r.chunks);
 }
 
@@ -2515,6 +2596,7 @@ function queueUploads(items) {
         let sent = 0;
         $('upload-status').classList.remove('hidden');
         $('upload-status-bar').classList.remove('success', 'failed');$('upload-status-bar').style.width = '0%';
+        updateWakeLock();
         try {
             for (let i = 0; i < items.length; i++) {
                 const item = items[i];
@@ -2529,6 +2611,7 @@ function queueUploads(items) {
             $('upload-status-text').innerText = 'Upload failed';$('upload-status-bar').classList.add('failed');
             throw err;
         } finally {
+            updateWakeLock();
             setTimeout(() => {
                 if (uploadSeq === seq) $('upload-status').classList.add('hidden');
             }, 2000);
