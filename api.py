@@ -2,7 +2,8 @@
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from pathlib import Path
 import random
 from pydantic import BaseModel
 import time
@@ -80,4 +81,20 @@ def get_turn(code: str):
     return session
 
 
-app.mount("/", StaticFiles(directory=".", html=True), name="static")
+STATIC_FILES = {
+    "index.html": "text/html; charset=utf-8",
+    "favicon.svg": "image/svg+xml",
+}
+_BASE_DIR = Path(__file__).resolve().parent
+
+
+@app.get("/")
+def index():
+    return FileResponse(_BASE_DIR / "index.html", media_type=STATIC_FILES["index.html"])
+
+
+@app.get("/{name}")
+def static_file(name: str):
+    if name not in STATIC_FILES:
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(_BASE_DIR / name, media_type=STATIC_FILES[name])
